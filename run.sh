@@ -20,10 +20,13 @@ if [ ! -f "$FRAMEWORK_ROOT/envs/$ENV/$SCRIPT" ] && [ ! -f "$FRAMEWORK_ROOT/envs/
 fi
 
 # Source env.conf: base first, then env-specific override
+# set -a auto-exports all sourced variables so exec'd scripts inherit them
+set -a
 source "$FRAMEWORK_ROOT/envs/base/env.conf"
 if [ -f "$FRAMEWORK_ROOT/envs/$ENV/env.conf" ]; then
   source "$FRAMEWORK_ROOT/envs/$ENV/env.conf"
 fi
+set +a
 
 # Resolve script: env-specific if exists, otherwise base
 if [ -f "$FRAMEWORK_ROOT/envs/$ENV/$SCRIPT" ]; then
