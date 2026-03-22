@@ -1,0 +1,19 @@
+<clickhouse>
+    <!-- Keep trace log -->
+    <trace_log>
+        <database>system</database>
+        <table>trace_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </trace_log>
+
+    <!-- Enable memory profiling at server level -->
+    <total_memory_profiler_step>4194304</total_memory_profiler_step>
+
+    <!-- Enable query profiling in default profile -->
+    <profiles>
+        <default>
+            <query_profiler_real_time_period_ns>10000000</query_profiler_real_time_period_ns>
+            <query_profiler_cpu_time_period_ns>10000000</query_profiler_cpu_time_period_ns>
+        </default>
+    </profiles>
+</clickhouse>
