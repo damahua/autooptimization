@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoopt-pyserver
+  labels:
+    app: autoopt-pyserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoopt-pyserver
+  template:
+    metadata:
+      labels:
+        app: autoopt-pyserver
+    spec:
+      containers:
+      - name: pyserver
+        image: ${IMAGE_NAME}
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "${RESOURCE_REQUESTS_CPU}"
+            memory: "${RESOURCE_REQUESTS_MEMORY}"
+          limits:
+            cpu: "${RESOURCE_LIMITS_CPU}"
+            memory: "${RESOURCE_LIMITS_MEMORY}"
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
