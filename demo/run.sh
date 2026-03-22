@@ -155,8 +155,8 @@ cd - > /dev/null
 run_experiment "exp001" "cap history + shallow copy" "$FRONTIER"
 
 # Decide
-DELTA_BL=$(echo "scale=1; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc)
-DELTA_P=$(echo "scale=1; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc)
+DELTA_BL=$(echo "scale=4; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc | xargs printf "%.1f")
+DELTA_P=$(echo "scale=4; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc | xargs printf "%.1f")
 ABS_DELTA=$(echo "$DELTA_P" | tr -d '-')
 if (( $(echo "$ABS_DELTA >= 1" | bc -l) )) && (( $(echo "$DELTA_P < 0" | bc -l) )); then
   STATUS="keep"; FRONTIER="autoopt/$TARGET/$TAG-exp001"; FRONTIER_RSS="$LAST_PEAK_RSS"
@@ -214,17 +214,15 @@ cd - > /dev/null
 
 run_experiment "exp002" "list to set for dedup" "$FRONTIER"
 
-DELTA_BL=$(echo "scale=1; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc)
-DELTA_P=$(echo "scale=1; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc)
+DELTA_BL=$(echo "scale=4; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc | xargs printf "%.1f")
+DELTA_P=$(echo "scale=4; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc | xargs printf "%.1f")
 ABS_DELTA=$(echo "$DELTA_P" | tr -d '-')
-# Keep if memory improved OR latency improved significantly (same-metric framework would check primary only)
 if (( $(echo "$ABS_DELTA >= 1" | bc -l) )) && (( $(echo "$DELTA_P < 0" | bc -l) )); then
   STATUS="keep"; FRONTIER="autoopt/$TARGET/$TAG-exp002"; FRONTIER_RSS="$LAST_PEAK_RSS"
   echo "[demo] DECISION: KEEP (delta ${DELTA_P}%)"
 else
-  # Still keep if RSS is within noise but no regression
-  STATUS="keep"; FRONTIER="autoopt/$TARGET/$TAG-exp002"; FRONTIER_RSS="$LAST_PEAK_RSS"
-  echo "[demo] DECISION: KEEP (latency improvement, RSS within noise)"
+  STATUS="discard"
+  echo "[demo] DECISION: DISCARD (delta ${DELTA_P}%)"
 fi
 echo -e "exp002\t$LAST_BRANCH\t$FRONTIER\t$LAST_COMMIT\tpeak_rss_mb\t$LAST_PEAK_RSS\t$BASELINE_RSS\t${DELTA_BL}%\t${DELTA_P}%\t$LAST_CPU\t$LAST_LATENCY\t$LAST_ERROR_RATE\t$LAST_RESTARTS\t$STATUS\tlist to set for O(1) dedup" \
   >> "results/$TARGET/$ENV/results.tsv"
@@ -276,8 +274,8 @@ cd - > /dev/null
 
 run_experiment "exp003" "generators + heapq" "$FRONTIER"
 
-DELTA_BL=$(echo "scale=1; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc)
-DELTA_P=$(echo "scale=1; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc)
+DELTA_BL=$(echo "scale=4; ($LAST_PEAK_RSS - $BASELINE_RSS) / $BASELINE_RSS * 100" | bc | xargs printf "%.1f")
+DELTA_P=$(echo "scale=4; ($LAST_PEAK_RSS - $FRONTIER_RSS) / $FRONTIER_RSS * 100" | bc | xargs printf "%.1f")
 ABS_DELTA=$(echo "$DELTA_P" | tr -d '-')
 if (( $(echo "$ABS_DELTA >= 1" | bc -l) )) && (( $(echo "$DELTA_P < 0" | bc -l) )); then
   STATUS="keep"; FRONTIER="autoopt/$TARGET/$TAG-exp003"; FRONTIER_RSS="$LAST_PEAK_RSS"
