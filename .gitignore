@@ -4,6 +4,9 @@ targets/*/src/
 # Experiment results (generated)
 results/
 
+# Build artifacts
+targets/*/output/
+
 # Runtime artifacts
 *.log
 /tmp/autoopt-*
