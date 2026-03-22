@@ -1,0 +1,6 @@
+exp_id	branch	parent_branch	commit	metric_name	metric_value	baseline_value	delta_vs_baseline	delta_vs_parent	cpu_pct	latency_p99_ms	error_rate	pod_restarts	status	description
+exp001	feature/profiling	main	-	peak_rss_mb	1212.5	1149.9	+5.4%	-	0	42	0	0	discarded	jemalloc decay tuning (dirty_decay_ms=1000, muzzy_decay_ms=1000)
+exp002	feature/profiling	main	-	peak_rss_mb	-	1149.9	-	-	-	-	-	-	crash	Thread pool reduction (exit code 36 - background_schedule_pool_size=16, background_pool_size=2, max_thread_pool_size=100)
+exp003	feature/profiling	main	-	peak_rss_mb	1209.0	1149.9	+5.1%	-	0	42	0	0	discarded	Cache size reduction (mark_cache=8MB, uncompressed=0, index_mark=8MB, compiled_expr=8MB)
+exp004	feature/profiling	main	-	peak_rss_mb	1165.1	1149.9	+1.3%	-	0	37	0	0	discarded	Disable system logs (metric_log, asynchronous_metric_log, part_log, text_log, processor_profile_log)
+exp005	feature/profiling	main	-	peak_rss_mb	-	1149.9	-	-	-	-	-	-	crash	Combined config (exit code 36 - includes thread pool reduction from exp002)
