@@ -1,0 +1,9 @@
+# Target source code (each is its own git repo)
+targets/*/src/
+
+# Experiment results (generated)
+results/
+
+# Runtime artifacts
+*.log
+/tmp/autoopt-*
