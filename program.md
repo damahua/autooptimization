@@ -4,7 +4,12 @@ This is a framework for autonomous AI-driven code optimization. Inspired by [kar
 
 ## Prerequisites
 
-Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl
+Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl, perl
+
+Optional (for profiling/flame graphs):
+```bash
+git clone https://github.com/brendangregg/FlameGraph.git tools/FlameGraph
+```
 
 ## Setup
 
@@ -86,6 +91,64 @@ Once setup is confirmed, run this loop **forever** until the human stops you:
 20. Update summary.md
 21. Repeat from step 1
 ```
+
+## Profiling-Driven Mode
+
+Profiling is a first-class feature. Use it to identify hot paths and guide experiment selection.
+
+### Setup
+
+Install FlameGraph tools (one-time):
+```bash
+git clone https://github.com/brendangregg/FlameGraph.git tools/FlameGraph
+```
+
+### Running the Profiler
+
+```bash
+./run.sh <env> profile.sh <target>
+```
+
+Optional: set `PROFILE_TYPE=cpu`, `PROFILE_TYPE=memory`, or `PROFILE_TYPE=both` (default).
+
+### When to Profile
+
+- **After baseline workload** — profile before any experiments to understand the hot paths
+- **After each KEEP experiment** — re-profile to see how the hot paths shifted
+- Profile output goes to `results/<target>/<env>/profiles/`
+
+### How to Analyze
+
+1. Read `results/<target>/<env>/profiles/profiling_summary.txt` — top CPU functions, top memory allocators, per-query stats
+2. Open `*_flamegraph.svg` files in a browser to visually explore the call stack
+3. Look for wide frames near the bottom (high self-time = hot leaf) and tall stacks (deep call chains that allocate)
+
+### Feeding Profiling Into the Experiment Loop
+
+```
+1. Profile after baseline
+2. Read profiling_summary.txt → identify top 3–5 hot functions
+3. Locate those functions in targets/<target>/src/ using grep/search
+4. Read the source at those hot paths
+5. Propose experiments targeting those specific code paths
+6. After each KEEP, re-profile to confirm the hot path improved
+```
+
+This "profile → locate → experiment → verify" cycle is more targeted than blind code scanning.
+
+### Target profile.sh Contract
+
+Each target that supports profiling must provide `targets/<target>/profile.sh` with:
+
+- **Input env vars:** `SERVICE_HOST`, `SERVICE_PORT`, `PROFILE_TYPE` (cpu|memory|both), `PROFILE_DIR`
+- **Outputs:**
+  - `$PROFILE_DIR/<name>.folded` — folded stack format (one line per stack, `frame1;frame2;...;frameN count`)
+  - `$PROFILE_DIR/profiling_summary.txt` — human-readable summary of top functions/allocators
+- **Exit:** 0 on success; non-zero aborts profiling with a warning
+
+The framework's `envs/base/profile.sh` handles flame graph generation from the `.folded` files automatically.
+
+---
 
 ## Rules
 

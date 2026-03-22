@@ -225,7 +225,7 @@ results/
 ```
 Usage:  ./run.sh <env> <script> <target>
 Args:   env     — environment name (local, staging, prod, prod-eu)
-        script  — script name (build.sh, deploy.sh, workload.sh, collect.sh, teardown.sh, cleanup.sh, validate.sh)
+        script  — script name (build.sh, deploy.sh, workload.sh, collect.sh, teardown.sh, cleanup.sh, validate.sh, profile.sh)
         target  — target name (clickhouse, kafka, etc.)
 Exit:   passes through the exit code of the executed script
 Env:    all variables from base/env.conf + <env>/env.conf are exported
@@ -776,6 +776,52 @@ fi
 
 echo "[cleanup] Done."
 ```
+
+---
+
+### 6.10 profile.sh — Profiling Orchestrator
+
+**Purpose:** Delegate to the target's profiling script, then generate flame graphs from the folded stack output using tools/FlameGraph.
+
+**Interface:**
+```
+Usage:  ./run.sh <env> profile.sh <target>
+Input:  $TARGET, $FRAMEWORK_ROOT, $ENV, env vars from env.conf
+        PROFILE_TYPE=cpu|memory|both (optional, default: both)
+Output: results/<target>/<env>/profiles/*.folded
+        results/<target>/<env>/profiles/*_flamegraph.svg
+        results/<target>/<env>/profiles/profiling_summary.txt
+Exit:   0 = success or no profile.sh found (graceful skip)
+        non-zero = target profiling failed
+```
+
+**Prerequisite:** `tools/FlameGraph/` must exist (see setup below). If absent, flame graph generation is skipped with a warning.
+
+```bash
+# Install FlameGraph (one-time)
+git clone https://github.com/brendangregg/FlameGraph.git tools/FlameGraph
+```
+
+**Target profile.sh contract:**
+
+Each target provides `targets/<target>/profile.sh`. The framework passes these env vars:
+
+| Variable | Description |
+|----------|-------------|
+| `SERVICE_HOST` | Host of the running service |
+| `SERVICE_PORT` | Port of the running service |
+| `PROFILE_TYPE` | `cpu`, `memory`, or `both` |
+| `PROFILE_DIR` | Directory to write output files |
+
+The target script must write:
+- `$PROFILE_DIR/<name>.folded` — folded stack format (`frame1;frame2;...;frameN count`)
+- `$PROFILE_DIR/profiling_summary.txt` — human-readable summary
+
+The framework's `envs/base/profile.sh` generates `*_flamegraph.svg` files automatically from every `.folded` file found in `PROFILE_DIR`.
+
+**When to run:**
+- After baseline workload, before starting experiments
+- After each KEEP experiment to see how hot paths shifted
 
 ---
 

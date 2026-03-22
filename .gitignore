@@ -11,3 +11,6 @@ targets/*/output/
 # Runtime artifacts
 *.log
 /tmp/autoopt-*
+
+# Third-party tools (install separately)
+tools/

@@ -1,201 +1,106 @@
 #!/bin/bash
-set -uo pipefail
+set -euo pipefail
 
 HOST="${SERVICE_HOST:-localhost}"
 PORT="${SERVICE_PORT:-8123}"
-BASE_URL="http://$HOST:$PORT"
-PROFILE_DIR="${1:-.}"
+BASE_URL="http://$HOST:$PORT/?allow_introspection_functions=1"
+PROFILE_DIR="${PROFILE_DIR:-.}"
 
-echo "[profile] Collecting profiling data from ClickHouse system tables..."
-echo "[profile] Target: $BASE_URL"
-echo "[profile] Output: $PROFILE_DIR/"
-echo ""
+echo "[clickhouse-profile] Collecting profiling data from $HOST:$PORT"
 
-# Helper: run a ClickHouse query and print the result
-run_query() {
-    local result
-    result=$(curl -s --max-time 30 "$BASE_URL" --data-binary "$1" 2>&1)
-    local rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "(query failed: curl exit $rc)"
-        return 1
-    fi
-    if [ -z "$result" ]; then
-        echo "(no data)"
-        return 0
-    fi
-    echo "$result"
-}
-
-# Helper: run a ClickHouse query and save to file
-run_query_to_file() {
-    curl -s --max-time 30 "$BASE_URL" --data-binary "$1" > "$2" 2>/dev/null
-    local rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "(query to file failed: curl exit $rc)"
-        return 1
-    fi
-    return 0
-}
-
-# 1. Query-level memory and timing
-echo "[profile] === Per-Query Memory Usage ==="
-run_query "
-SELECT
-    query,
-    formatReadableSize(memory_usage) as peak_memory,
-    query_duration_ms,
-    read_rows,
-    formatReadableSize(read_bytes) as read_size,
-    result_rows
-FROM system.query_log
-WHERE type = 'QueryFinish'
-  AND query NOT LIKE '%system%'
-  AND event_date = today()
-ORDER BY memory_usage DESC
-LIMIT 20
-FORMAT PrettyCompact
-"
-
-# 2. CPU/Real trace flame graph data (stack traces)
-echo ""
-echo "[profile] === Wall-Clock Traces (top functions) ==="
-run_query_to_file "
-SELECT
-    count() as samples,
-    arrayStringConcat(arrayMap(x -> demangle(addressToSymbol(x)), trace), ';') as stack
-FROM system.trace_log
-WHERE trace_type = 'Real'
-  AND event_date = today()
-GROUP BY trace
-ORDER BY samples DESC
-LIMIT 30
-FORMAT TabSeparated
-SETTINGS allow_introspection_functions = 1
-" "$PROFILE_DIR/cpu_traces.tsv"
-
-if [ -s "$PROFILE_DIR/cpu_traces.tsv" ]; then
-    echo "Wall-clock trace data saved. Top functions:"
-    run_query "
-    SELECT
-        count() as samples,
-        demangle(addressToSymbol(trace[1])) as top_function
-    FROM system.trace_log
-    WHERE trace_type = 'Real'
-      AND event_date = today()
-    GROUP BY top_function
-    ORDER BY samples DESC
-    LIMIT 20
-    FORMAT PrettyCompact
-    SETTINGS allow_introspection_functions = 1
-    "
-else
-    echo "(no wall-clock traces captured)"
+# 1. CPU folded stacks (for flame graph)
+if [ "$PROFILE_TYPE" = "cpu" ] || [ "$PROFILE_TYPE" = "both" ]; then
+  echo "[clickhouse-profile] Extracting CPU traces..."
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT
+      arrayStringConcat(arrayReverse(arrayMap(x -> demangle(addressToSymbol(x)), trace)), ';') as stack,
+      count() as samples
+  FROM system.trace_log
+  WHERE trace_type IN ('Real', 'CPU')
+    AND length(trace) > 0
+  GROUP BY trace
+  HAVING samples > 0
+  ORDER BY samples DESC
+  FORMAT TabSeparated
+  " > "$PROFILE_DIR/cpu.folded" 2>/dev/null || echo "(no CPU traces)"
 fi
 
-# 3. Memory allocation traces (deeper call stack)
-echo ""
-echo "[profile] === Memory Allocation Traces (top callers at depth 5) ==="
-run_query "
-SELECT
-    count() as samples,
-    demangle(addressToSymbol(trace[5])) as caller_function,
-    formatReadableSize(sum(abs(size))) as total_alloc
-FROM system.trace_log
-WHERE trace_type = 'Memory'
-  AND event_date = today()
-  AND length(trace) > 5
-GROUP BY caller_function
-ORDER BY sum(abs(size)) DESC
-LIMIT 20
-FORMAT PrettyCompact
-SETTINGS allow_introspection_functions = 1
-"
-
-# 4. Memory allocation stack traces for flame graph
-echo ""
-echo "[profile] Saving memory trace data..."
-run_query_to_file "
-SELECT
-    sum(abs(size)) as total_bytes,
-    arrayStringConcat(arrayMap(x -> demangle(addressToSymbol(x)), trace), ';') as stack
-FROM system.trace_log
-WHERE trace_type = 'Memory'
-  AND event_date = today()
-GROUP BY trace
-ORDER BY total_bytes DESC
-LIMIT 50
-FORMAT TabSeparated
-SETTINGS allow_introspection_functions = 1
-" "$PROFILE_DIR/memory_traces.tsv"
-
-if [ -s "$PROFILE_DIR/memory_traces.tsv" ]; then
-    echo "Memory trace data saved to memory_traces.tsv"
-else
-    echo "(no memory trace data)"
+# 2. Memory folded stacks (for flame graph)
+if [ "$PROFILE_TYPE" = "memory" ] || [ "$PROFILE_TYPE" = "both" ]; then
+  echo "[clickhouse-profile] Extracting memory traces..."
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT
+      arrayStringConcat(arrayReverse(arrayMap(x -> demangle(addressToSymbol(x)), trace)), ';') as stack,
+      sum(abs(size)) as total_bytes
+  FROM system.trace_log
+  WHERE trace_type = 'Memory'
+    AND length(trace) > 0
+  GROUP BY trace
+  HAVING total_bytes > 0
+  ORDER BY total_bytes DESC
+  FORMAT TabSeparated
+  " > "$PROFILE_DIR/memory.folded" 2>/dev/null || echo "(no memory traces)"
 fi
 
-# 5. Overall server memory breakdown
-echo ""
-echo "[profile] === Server Memory Breakdown ==="
-run_query "
-SELECT
-    metric,
-    formatReadableSize(value) as size
-FROM system.metrics
-WHERE metric LIKE '%Memory%' OR metric LIKE '%Cache%' OR metric LIKE '%Buffer%'
-ORDER BY value DESC
-FORMAT PrettyCompact
-"
+# 3. Generate profiling summary
+echo "[clickhouse-profile] Generating profiling summary..."
+{
+  echo "=== ClickHouse Profiling Summary ==="
+  echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo ""
 
-# 6. Asynchronous metrics (caches, pools)
-echo ""
-echo "[profile] === Cache and Buffer Metrics ==="
-run_query "
-SELECT
-    metric,
-    formatReadableSize(value) as size
-FROM system.asynchronous_metrics
-WHERE metric LIKE '%CacheSize%' OR metric LIKE '%CacheBytes%' OR metric LIKE '%MarkCache%'
-ORDER BY value DESC
-LIMIT 20
-FORMAT PrettyCompact
-"
+  echo "--- Top CPU Functions (leaf) ---"
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT count() as samples, demangle(addressToSymbol(trace[1])) as leaf_function
+  FROM system.trace_log
+  WHERE trace_type IN ('Real', 'CPU') AND length(trace) > 0
+  GROUP BY leaf_function ORDER BY samples DESC LIMIT 15
+  FORMAT TabSeparated
+  " 2>/dev/null || echo "(no data)"
 
-# 7. Memory breakdown by allocator
-echo ""
-echo "[profile] === Memory Allocator Stats ==="
-run_query "
-SELECT
-    metric,
-    formatReadableSize(value) as size
-FROM system.asynchronous_metrics
-WHERE metric LIKE '%Allocated%' OR metric LIKE '%Mapped%' OR metric LIKE '%Resident%'
-ORDER BY value DESC
-LIMIT 20
-FORMAT PrettyCompact
-"
+  echo ""
+  echo "--- Top Memory Allocators ---"
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT
+      sum(abs(size)) as total_bytes,
+      count() as alloc_count,
+      demangle(addressToSymbol(trace[1])) as func
+  FROM system.trace_log
+  WHERE trace_type = 'Memory' AND length(trace) > 0
+  GROUP BY func ORDER BY total_bytes DESC LIMIT 15
+  FORMAT TabSeparated
+  " 2>/dev/null || echo "(no data)"
 
-# 8. Server settings affecting memory
-echo ""
-echo "[profile] === Key Server Settings ==="
-run_query "
-SELECT name, value
-FROM system.server_settings
-WHERE name IN (
-    'mark_cache_size', 'uncompressed_cache_size',
-    'compiled_expression_cache_size',
-    'max_server_memory_usage', 'max_server_memory_usage_to_ram_ratio',
-    'max_thread_pool_size', 'max_thread_pool_free_size',
-    'background_pool_size', 'background_schedule_pool_size',
-    'background_common_pool_size', 'background_buffer_flush_schedule_pool_size',
-    'background_fetches_pool_size', 'background_move_pool_size',
-    'max_concurrent_queries'
-)
-ORDER BY name
-FORMAT PrettyCompact
-"
+  echo ""
+  echo "--- Per-Query Memory Usage ---"
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT
+      substring(query, 1, 100) as query_prefix,
+      max(memory_usage) as peak_memory,
+      avg(query_duration_ms) as avg_ms,
+      count() as executions
+  FROM system.query_log
+  WHERE type = 'QueryFinish' AND query NOT LIKE '%system%' AND event_date = today()
+  GROUP BY query_prefix ORDER BY peak_memory DESC LIMIT 15
+  FORMAT TabSeparated
+  " 2>/dev/null || echo "(no data)"
 
-echo ""
-echo "[profile] Profiling data saved to $PROFILE_DIR/"
-echo "[profile] Files: cpu_traces.tsv, memory_traces.tsv"
+  echo ""
+  echo "--- Server Memory Breakdown ---"
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT metric, value FROM system.metrics
+  WHERE metric LIKE '%Memory%' OR metric LIKE '%Cache%'
+  ORDER BY value DESC LIMIT 15
+  FORMAT TabSeparated
+  " 2>/dev/null || echo "(no data)"
+
+  echo ""
+  echo "--- Cache Utilization ---"
+  curl -sf "$BASE_URL" --data-binary "
+  SELECT metric, value FROM system.asynchronous_metrics
+  WHERE metric LIKE '%Cache%' ORDER BY value DESC LIMIT 15
+  FORMAT TabSeparated
+  " 2>/dev/null || echo "(no data)"
+} > "$PROFILE_DIR/profiling_summary.txt"
+
+echo "[clickhouse-profile] Done. Files written to $PROFILE_DIR/"
