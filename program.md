@@ -103,50 +103,165 @@ Install FlameGraph tools (one-time):
 git clone https://github.com/brendangregg/FlameGraph.git tools/FlameGraph
 ```
 
-### Running the Profiler
+### Optimization Methodology
+
+The framework follows a rigorous profiling-driven optimization process. Do NOT skip steps or guess at optimizations.
+
+#### Step 1: Understand the Target
+
+Before any optimization, understand the target's architecture and typical use cases:
+- Read `target.md` — what is this software? what are its critical code paths?
+- Read `hints.md` — what domain knowledge exists?
+- Research the target's documentation — what are typical workloads?
+- Understand the data flow: how does a request/query flow through the code?
+
+#### Step 2: Design Representative Workload
+
+The workload MUST exercise the code paths that matter in production:
+- Study the target's typical use cases (e.g., for a database: OLAP queries, inserts, scans)
+- Design queries/requests that stress the areas listed in `target.md` editable scope
+- Use realistic data sizes (not toy data) — at least 1M+ rows for databases
+- Include a mix of operations that reflect real usage patterns
+- Update `targets/<target>/workload.sh` if the current workload is insufficient
+
+#### Step 3: Profile the Baseline
 
 ```bash
-./run.sh <env> profile.sh <target>
+./run.sh <env> profile.sh <target>    # PROFILE_TYPE=cpu|memory|both (default: both)
 ```
 
-Optional: set `PROFILE_TYPE=cpu`, `PROFILE_TYPE=memory`, or `PROFILE_TYPE=both` (default).
+The profiler generates:
+- `*.folded` files — folded stacks for flame graph generation (FlameGraph tool format)
+- `profiling_summary.txt` — structured analysis for agent consumption
+- `*_flamegraph.svg` — interactive flame graph visualizations
 
-### When to Profile
+#### Step 4: Analyze Profiling Data
 
-- **After baseline workload** — profile before any experiments to understand the hot paths
-- **After each KEEP experiment** — re-profile to see how the hot paths shifted
-- Profile output goes to `results/<target>/<env>/profiles/`
+Read `profiling_summary.txt` and analyze each section:
 
-### How to Analyze
+**Section A — Memory allocation hot paths:**
+- Which functions allocate the most total bytes?
+- What is the CALL CHAIN? (func ← caller ← grandcaller tells you WHY it's called)
+- What is the allocation SIZE distribution? (many small = pooling candidate, few large = buffer sizing)
 
-1. Read `results/<target>/<env>/profiles/profiling_summary.txt` — top CPU functions, top memory allocators, per-query stats
-2. Open `*_flamegraph.svg` files in a browser to visually explore the call stack
-3. Look for wide frames near the bottom (high self-time = hot leaf) and tall stacks (deep call chains that allocate)
+**Section B — CPU hot paths:**
+- Which functions consume the most CPU (excluding idle threads)?
+- What is the call chain? What operation triggers this?
 
-### Feeding Profiling Into the Experiment Loop
+**Section C — Per-query resource usage:**
+- Which query types use the most memory? Those are optimization targets.
+- Are some queries disproportionately expensive?
 
+**Section D — Server memory state:**
+- Are caches oversized for the workload? (allocated >> used)
+- Is jemalloc retaining too much memory?
+
+**Section E — Allocation patterns:**
+- Functions with high alloc AND dealloc counts have "churn" — candidates for object pooling
+- High churn_bytes with low net_bytes = objects being created and destroyed repeatedly
+
+#### Step 5: Classify Each Optimization Opportunity
+
+For each hot path identified, classify it:
+
+| Pattern | What to look for | Optimization |
+|---------|-----------------|--------------|
+| **Unnecessary allocation** | Object created every call but could be reused | Object pooling, pre-allocation, arena allocator |
+| **Oversized buffer** | Buffer allocated much larger than data written | Reduce buffer size, use dynamic sizing |
+| **Unnecessary copy** | Deep copy where move/reference works | Use move semantics, pass by reference |
+| **Wrong data structure** | List used for lookups, unsorted for binary search | Replace with hashmap, sorted container |
+| **Redundant computation** | Same calculation repeated across calls | Cache result, memoize |
+| **Alloc/free churn** | High churn_bytes in Section E | Pool objects, use arena allocator |
+| **Cache-unfriendly** | Data scattered across memory | Array-of-structs → struct-of-arrays |
+| **Algorithmic** | O(n²) pattern in hot loop | Use better algorithm |
+| **Config oversizing** | Cache/pool allocated >> used (Section D) | Reduce config values |
+
+#### Step 6: Locate Hot Functions in Source Code
+
+For each optimization candidate:
+```bash
+# Find the function in source
+grep -rn "function_name" targets/<target>/src/src/ --include="*.cpp" --include="*.h"
 ```
-1. Profile after baseline
-2. Read profiling_summary.txt → identify top 3–5 hot functions
-3. Locate those functions in targets/<target>/src/ using grep/search
-4. Read the source at those hot paths
-5. Propose experiments targeting those specific code paths
-6. After each KEEP, re-profile to confirm the hot path improved
+- Read the source code at that location
+- Understand the context: loop? constructor? per-request?
+- Trace up the call chain: who calls this and how often?
+
+#### Step 7: Create Experiment Plan
+
+Before making ANY code changes, write an experiment plan:
+- What specifically to change (file, function, line)
+- WHY this should help (based on profiling data)
+- WHICH workload queries exercise this path
+- Expected impact (quantified from profiling: "this path allocates X bytes, fix should save Y%")
+- Risks (what could break?)
+
+#### Step 8: Execute Experiments (one at a time)
+
+Each experiment in its own branch:
+```bash
+cd targets/<target>/src
+git checkout <frontier_branch>
+git checkout -b autoopt/<target>/<tag>-exp<NNN>
+# make the change
+git commit -m "[autoopt] exp<NNN>: <what and why>"
 ```
 
-This "profile → locate → experiment → verify" cycle is more targeted than blind code scanning.
+Then run the full pipeline:
+```bash
+./run.sh <env> build.sh <target>
+./run.sh <env> deploy.sh <target>
+./run.sh <env> workload.sh <target>
+./run.sh <env> profile.sh <target>     # RE-PROFILE with same workload
+./run.sh <env> collect.sh <target>
+./run.sh <env> validate.sh <target>
+```
+
+#### Step 9: Compare Profiles (Before vs After)
+
+```bash
+BASELINE_PROFILE_DIR=results/<target>/<env>/profiles/baseline \
+CURRENT_PROFILE_DIR=results/<target>/<env>/profiles \
+./run.sh <env> compare.sh <target>
+```
+
+This generates differential flame graphs (red = regression, blue = improvement) and a comparison summary. Check:
+- Did the targeted hot path actually shrink?
+- Did any other path grow as a side effect?
+- Did the primary metric (RSS, CPU) improve overall?
+
+#### Step 10: Keep/Discard and Iterate
+
+After fixing the biggest bottleneck, the NEXT bottleneck is revealed. Re-profile and repeat.
+
+The optimization is done when:
+- Primary metric meets the target
+- Remaining hot paths are in read-only scope (can't change)
+- Further improvements are below noise threshold
+
+### Scripts Reference
+
+```bash
+./run.sh <env> profile.sh <target>     # profile: delegates to target, generates flame graphs
+./run.sh <env> compare.sh <target>     # compare: diff flame graphs (before vs after)
+```
 
 ### Target profile.sh Contract
 
-Each target that supports profiling must provide `targets/<target>/profile.sh` with:
+Each target that supports profiling provides `targets/<target>/profile.sh`:
 
 - **Input env vars:** `SERVICE_HOST`, `SERVICE_PORT`, `PROFILE_TYPE` (cpu|memory|both), `PROFILE_DIR`
 - **Outputs:**
-  - `$PROFILE_DIR/<name>.folded` — folded stack format (one line per stack, `frame1;frame2;...;frameN count`)
-  - `$PROFILE_DIR/profiling_summary.txt` — human-readable summary of top functions/allocators
-- **Exit:** 0 on success; non-zero aborts profiling with a warning
+  - `$PROFILE_DIR/<name>.folded` — folded stack format (`frame1;frame2;...;frameN\tcount`)
+  - `$PROFILE_DIR/profiling_summary.txt` — structured analysis with sections:
+    - A: Memory allocation hot paths with call chains
+    - B: CPU hot paths with call chains (excluding idle)
+    - C: Per-query resource usage
+    - D: Server memory state
+    - E: Allocation patterns (pooling candidates)
+- **Exit:** 0 on success
 
-The framework's `envs/base/profile.sh` handles flame graph generation from the `.folded` files automatically.
+The framework's `envs/base/profile.sh` generates flame graphs from `.folded` files automatically using Brendan Gregg's FlameGraph tools.
 
 ---
 
