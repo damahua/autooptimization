@@ -26,7 +26,7 @@ POD=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
 echo "[deploy] Pod ready: $POD"
 
 # 5. Port-forward in background
-LOCAL_PORT=$(shuf -i 30000-39999 -n 1)
+LOCAL_PORT=$(shuf -i 30000-39999 -n 1 2>/dev/null || awk 'BEGIN{srand(); print int(30000+rand()*10000)}')
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
   port-forward "pod/$POD" "$LOCAL_PORT:${TARGET_SERVICE_PORT:-8080}" &
 PF_PID=$!

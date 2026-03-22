@@ -4,6 +4,9 @@ TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 
+# macOS compatibility
+TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")
+
 # 1. Read connection info from deploy output
 if [ -f "/tmp/autoopt-$TARGET-connection.env" ]; then
   source "/tmp/autoopt-$TARGET-connection.env"
@@ -17,7 +20,13 @@ sleep "$WARMUP_SECONDS"
 
 # 3. Health check
 echo "[workload] Health check..."
-if ! timeout 30 bash -c "until curl -sf http://\$SERVICE_HOST:\$SERVICE_PORT/health 2>/dev/null || nc -z \$SERVICE_HOST \$SERVICE_PORT 2>/dev/null; do sleep 1; done"; then
+HEALTH_CHECK_CMD="bash -c \"until curl -sf http://\$SERVICE_HOST:\$SERVICE_PORT/health 2>/dev/null || nc -z \$SERVICE_HOST \$SERVICE_PORT 2>/dev/null; do sleep 1; done\""
+if [ -n "$TIMEOUT_CMD" ]; then
+  HEALTH_OK=$($TIMEOUT_CMD 30 bash -c "until curl -sf http://$SERVICE_HOST:$SERVICE_PORT/health 2>/dev/null || nc -z $SERVICE_HOST $SERVICE_PORT 2>/dev/null; do sleep 1; done" 2>/dev/null && echo yes || echo no)
+else
+  HEALTH_OK=$(bash -c "until curl -sf http://$SERVICE_HOST:$SERVICE_PORT/health 2>/dev/null || nc -z $SERVICE_HOST $SERVICE_PORT 2>/dev/null; do sleep 1; done" 2>/dev/null && echo yes || echo no)
+fi
+if [ "$HEALTH_OK" != "yes" ]; then
   echo "[workload] ERROR: Service not responding after warmup"
   exit 1
 fi
@@ -31,7 +40,11 @@ mkdir -p "$(dirname "$WORKLOAD_METRICS_FILE")"
 for i in $(seq 1 "$WORKLOAD_RUNS"); do
   echo "[workload] Run $i/$WORKLOAD_RUNS"
   set +e
-  timeout "$WORKLOAD_TIMEOUT" "$TARGET_DIR/workload.sh" >> "$WORKLOAD_METRICS_FILE" 2>&1
+  if [ -n "$TIMEOUT_CMD" ]; then
+    "$TIMEOUT_CMD" "$WORKLOAD_TIMEOUT" "$TARGET_DIR/workload.sh" >> "$WORKLOAD_METRICS_FILE" 2>&1
+  else
+    "$TARGET_DIR/workload.sh" >> "$WORKLOAD_METRICS_FILE" 2>&1
+  fi
   WORKLOAD_EXIT=$?
   set -e
   if [ $WORKLOAD_EXIT -ne 0 ]; then
