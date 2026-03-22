@@ -1,0 +1,6 @@
+<clickhouse>
+    <!-- Experiment: reduce only mark_cache and uncompressed_cache -->
+    <!-- Profiling showed only 4.5 KiB mark cache used, defaults are 5GB/8GB -->
+    <mark_cache_size>536870912</mark_cache_size>                     <!-- 512 MiB (from 5 GiB) -->
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>     <!-- 128 MiB (from 8 GiB) -->
+</clickhouse>
