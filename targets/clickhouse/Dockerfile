@@ -9,8 +9,9 @@
 
 ARG BUILD_MODE=source
 
-# --- Stock mode: use official image directly ---
+# --- Stock mode: use official image with optional config overlay ---
 FROM clickhouse/clickhouse-server:latest AS stock
+COPY src/config/ /etc/clickhouse-server/config.d/
 
 # --- Source mode: overlay custom binary on official image ---
 FROM clickhouse/clickhouse-server:latest AS source

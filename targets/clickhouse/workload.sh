@@ -48,12 +48,12 @@ QUERIES=(
 
 for q in "${QUERIES[@]}"; do
   for run in $(seq 1 5); do
-    START_MS=$(date +%s%3N 2>/dev/null || python3 -c "import time; print(int(time.time()*1000))")
+    START_MS=$(python3 -c "import time; print(int(time.time()*1000))")
     set +e
     curl -sf "$BASE_URL" --data-binary "$q FORMAT Null" > /dev/null 2>&1
     EXIT_CODE=$?
     set -e
-    END_MS=$(date +%s%3N 2>/dev/null || python3 -c "import time; print(int(time.time()*1000))")
+    END_MS=$(python3 -c "import time; print(int(time.time()*1000))")
 
     LATENCY=$((END_MS - START_MS))
     TOTAL_QUERIES=$((TOTAL_QUERIES + 1))
