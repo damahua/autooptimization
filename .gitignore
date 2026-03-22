@@ -1,5 +1,6 @@
 # Target source code (each is its own git repo)
 targets/*/src/
+targets/*/src-checkout/
 
 # Experiment results (generated)
 results/

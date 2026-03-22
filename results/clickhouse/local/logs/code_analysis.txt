@@ -1,0 +1,192 @@
+============================================================
+ClickHouse Source Code Analysis — Hot Paths from Profiling
+Date: 2026-03-22
+============================================================
+
+Profiling was done using ClickHouse's built-in query_profiler (10ms sampling)
+and memory profiler (4MB step) against a 100K-row MergeTree table with
+5 analytical queries, each run 5 times.
+
+============================================================
+1. WRITE PATH: WriteBufferFromFileDescriptor (911 MB total allocations)
+============================================================
+
+Source: src/Common/Allocator.cpp (lines 136-140)
+Called via: Allocator<false,false>::alloc() -> Memory<>::alloc() ->
+           WriteBufferFromFileDescriptor constructor
+
+The largest single memory consumer. Each WriteBufferFromFileDescriptor
+allocates a Memory<> buffer during construction. The default buffer size
+is typically 1MB (DBMS_DEFAULT_BUFFER_SIZE). During MergeTree part writes,
+multiple WriteBufferFromFile instances are created (one per data stream).
+
+Key observation: 208 allocations totaling 911MB means average allocation
+is ~4.4MB per call. These are internal I/O buffers for data file writes.
+
+File: src/Storages/MergeTree/MergeTreeDataPartWriterCompact.h (line 82)
+  - plain_file member: std::unique_ptr<WriteBufferFromFileBase>
+  - Created in constructor with settings.max_compress_block_size
+
+Optimization opportunity: Reduce buffer sizes via max_compress_block_size
+setting, or pool/reuse write buffers across part writes.
+
+============================================================
+2. WRITE PATH: CompressedWriteBuffer (103 MB total allocations)
+============================================================
+
+Source: CompressedWriteBuffer constructor
+Called via: MergeTreeDataPartWriterCompact::addStreams()
+
+File: src/Storages/MergeTree/MergeTreeDataPartWriterCompact.h (lines 86-94)
+  - CompressedStream struct wraps CompressedWriteBuffer + HashingWriteBuffer
+  - One stream per unique compression codec used
+
+24 allocations totaling 103MB (~4.3MB average). These are compression
+staging buffers. Created fresh for each merge/write operation.
+
+Optimization opportunity: Tune min_compress_block_size and
+max_compress_block_size settings to reduce buffer allocation overhead.
+
+============================================================
+3. WRITE PATH: Block::cloneEmptyColumns / Primary Index (64 MB)
+============================================================
+
+Source: Processors (via operator new)
+Called chain: Block::cloneEmptyColumns() ->
+  MergeTreeDataPartWriterOnDisk::calculateAndSerializePrimaryIndex() ->
+  MergeTreeDataPartWriterCompact::writeDataBlockPrimaryIndexAndSkipIndices()
+
+File: src/Storages/MergeTree/MergeTreeDataPartWriterCompact.cpp (lines 241-253)
+  writeDataBlockPrimaryIndexAndSkipIndices() calls getIndexBlockAndPermute()
+  which clones the block structure, allocating new column objects.
+
+16 allocations totaling 64MB. This cloning happens for EVERY granule batch
+during writes.
+
+Optimization opportunity: Reuse block structures across granules instead
+of cloning. Pre-allocate columns that match the primary key structure.
+
+============================================================
+4. COLUMN CREATION: ColumnSparse constructor (59 MB + 12.5 MB)
+============================================================
+
+Source: src/Columns/ColumnSparse.cpp (lines 26-34)
+Called via: IDataType::createColumn() -> ColumnSparse::ColumnSparse()
+Also via: MergeTreeReaderCompact::createColumnsForReading()
+
+File: src/Columns/ColumnSparse.cpp
+  Constructor calls values->insertDefault() and creates ColumnUInt64::create()
+  for offsets. The ColumnVector<long>::insertDefault triggers PODArray growth.
+
+Combined 23 allocations totaling ~71.5MB across ColumnSparse construction
+and related PODArray resizes.
+
+Optimization opportunity: Pre-reserve PODArray capacity when the expected
+size is known (e.g., during part reads where row count is in metadata).
+
+============================================================
+5. QUERY PATH: AggregatingTransform (1.5 MB per invocation)
+============================================================
+
+Source: src/Processors/Transforms/AggregatingTransform.h
+Called during GROUP BY queries (4 of 5 workload queries use GROUP BY).
+
+File: src/Processors/Transforms/AggregatingTransform.h (line 46-53)
+  AggregatingTransformParams constructor creates an Aggregator instance.
+
+Memory trace shows 1.5MB allocation in AggregatingTransform::work().
+For the current workload (100K rows, 5 categories), this is modest.
+
+Optimization opportunity: For low-cardinality GROUP BY, could potentially
+use smaller initial hash table sizes. The current implementation already
+handles this reasonably well.
+
+============================================================
+6. MERGE PATH: MergingSortedAlgorithm (2.7 MB + sort compilation)
+============================================================
+
+Source: src/Processors/Merges/Algorithms/MergingSortedAlgorithm.h
+Called during: MergeTree background merges
+
+The constructor calls compileSortDescriptionIfNeeded() which uses
+fmt::format (via tryGetArgsAndFormat) causing 2.7MB string allocation.
+This is JIT compilation overhead.
+
+File: src/Processors/Merges/Algorithms/MergingSortedAlgorithm.h
+  MergedData member holds all merged output rows.
+
+Optimization opportunity: Disable sort description compilation for
+simple merge cases. The compile_sort_description setting can be toggled.
+
+============================================================
+7. READ PATH: MergeTreeMarksLoader (3.4 MB)
+============================================================
+
+Source: src/Storages/MergeTree/MergeTreeMarksLoader.h
+Called via: loadMarksImpl() -> DataPartStorageOnDiskFull::getFileSize()
+
+4 allocations totaling 3.4MB for loading mark files (index structures
+that map granules to file offsets).
+
+File: src/Storages/MergeTree/MergeTreeMarksLoader.h (lines 39-78)
+  Supports async loading via ThreadPool and caching via MarkCache.
+
+Optimization opportunity: Ensure mark_cache is properly sized. Marks
+should ideally be loaded once and cached. The save_marks_in_cache and
+mark_cache_size settings control this.
+
+============================================================
+8. INSERT PATH: Squashing (4.4 MB per invocation)
+============================================================
+
+Source: src/Interpreters/Squashing.h
+Called via: Squashing::squash() -> ColumnVector<UInt64>::reserve()
+
+File: src/Interpreters/Squashing.h (lines 40-88)
+  Squashing merges small chunks into blocks meeting min_block_size_rows
+  and min_block_size_bytes thresholds.
+
+1 allocation of 4.4MB for column reservation during INSERT squashing.
+
+Optimization opportunity: Tune min_insert_block_size_rows and
+min_insert_block_size_bytes to balance between allocation overhead
+and I/O efficiency.
+
+============================================================
+9. CPU PROFILE SUMMARY
+============================================================
+
+The CPU profile is dominated by idle/waiting threads:
+- 7357/7375 samples (99.8%) are in empty frames (waiting/sleeping)
+- BackgroundSchedulePool::threadFunction() - 6313 samples (idle wait)
+- MergeTreeBackgroundExecutor - 362 samples (idle wait)
+- AsynchronousInsertQueue - 181 samples (timed wait)
+- CgroupsMemoryUsageObserver - 12 samples
+- __read (ReadBufferFromFileDescriptor) - 12 samples (actual I/O)
+
+The workload is extremely I/O-light (100K rows, ~1.2MB read per query).
+Real CPU hotspots would emerge with larger data or longer workloads.
+
+Non-idle CPU observations:
+- MergedData::insertChunk (merge operations)
+- IMergeTreeDataPart::shallParticipateInMerges (merge planning)
+- Block::cloneEmpty (structure copying)
+- DiskLocal::getAvailableSpace (filesystem checks)
+
+============================================================
+10. CONFIGURATION-BASED OPTIMIZATIONS (no source changes needed)
+============================================================
+
+The profiling.xml already enables:
+- query_profiler_real_time_period_ns: 10000000 (10ms)
+- query_profiler_cpu_time_period_ns: 10000000 (10ms)
+- total_memory_profiler_step: 4194304 (4MB)
+
+Settings that could reduce memory usage without code changes:
+- max_compress_block_size (default 1MB, reduce for smaller parts)
+- min_compress_block_size (default 64KB)
+- mark_cache_size (cache marks to avoid reload)
+- min_insert_block_size_rows / min_insert_block_size_bytes
+- compile_sort_description = 0 (avoid JIT compilation overhead)
+- max_threads (reduce thread pool sizes for low-concurrency workloads)
+- background_pool_size (reduce idle background threads)
