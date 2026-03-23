@@ -4,7 +4,7 @@
 # Uses ClickHouse's own build dependencies approach.
 # Supports both amd64 and arm64 (Apple Silicon).
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install LLVM/Clang (use whatever version is available for this platform)
 RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \
-    ./llvm.sh 18 all 2>/dev/null || ./llvm.sh 17 all 2>/dev/null || ./llvm.sh 16 all 2>/dev/null && \
+    ./llvm.sh 21 all 2>/dev/null || ./llvm.sh 20 all 2>/dev/null || ./llvm.sh 19 all 2>/dev/null || ./llvm.sh 18 all 2>/dev/null && \
     rm llvm.sh && \
     CLANG_VER=$(ls /usr/bin/clang-* 2>/dev/null | grep -oP '\d+' | sort -n | tail -1) && \
     update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${CLANG_VER} 100 && \
@@ -36,12 +36,11 @@ RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \
     update-alternatives --install /usr/bin/lld lld /usr/bin/lld-${CLANG_VER} 100 && \
     echo "Installed clang-${CLANG_VER}"
 
-# Configure ccache
+# Configure ccache (do NOT set CC/CXX — ClickHouse's PreLoad.cmake rejects custom flags)
+# Instead, use CMAKE_C_COMPILER_LAUNCHER=ccache in the build script
 ENV CCACHE_DIR=/ccache
 ENV CCACHE_MAXSIZE=10G
 ENV CCACHE_COMPRESS=1
-ENV CC="ccache clang"
-ENV CXX="ccache clang++"
 
 WORKDIR /build
 
