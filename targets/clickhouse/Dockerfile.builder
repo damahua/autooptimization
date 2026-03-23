@@ -1,27 +1,40 @@
 # Builder image for ClickHouse — persistent, with ccache
-# This image has all build dependencies and is reused across experiments.
 # Source is mounted at /src, ccache volume at /ccache, output at /output.
+#
+# Uses ClickHouse's own build dependencies approach.
+# Supports both amd64 and arm64 (Apple Silicon).
 
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
+# Note: ClickHouse needs clang-18+ for recent versions, but clang-16 works for most
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     ninja-build \
-    clang-16 \
-    lld-16 \
     ccache \
     git \
     python3 \
-    libssl-dev \
-    libicu-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100 \
-    && update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100 \
-    && update-alternatives --install /usr/bin/lld lld /usr/bin/lld-16 100
+    nasm \
+    yasm \
+    gawk \
+    lsb-release \
+    wget \
+    software-properties-common \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install LLVM/Clang (use whatever version is available for this platform)
+RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \
+    ./llvm.sh 18 all 2>/dev/null || ./llvm.sh 17 all 2>/dev/null || ./llvm.sh 16 all 2>/dev/null && \
+    rm llvm.sh && \
+    CLANG_VER=$(ls /usr/bin/clang-* 2>/dev/null | grep -oP '\d+' | sort -n | tail -1) && \
+    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${CLANG_VER} 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${CLANG_VER} 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/bin/lld-${CLANG_VER} 100 && \
+    echo "Installed clang-${CLANG_VER}"
 
 # Configure ccache
 ENV CCACHE_DIR=/ccache
