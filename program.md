@@ -57,6 +57,29 @@ To set up a new optimization run, work with the user to:
 
 ## Experiment Loop
 
+### Optimization Priority
+
+**Focus on real code-level optimizations — NOT configuration changes.**
+
+Priority order (highest first):
+1. **Data structure changes** — replace a container with a more efficient one (vector → arena, map → flat_hash_map, list → set)
+2. **Memory allocation patterns** — change growth strategies, add object pooling, reuse objects instead of re-allocating, eliminate unnecessary copies
+3. **Algorithmic improvements** — reduce complexity (O(n²) → O(n log n)), eliminate redundant work, batch operations
+4. **Processing logic optimization** — remove unnecessary copies/clones, use move semantics, avoid re-computation
+5. **CPU optimization** — improve cache locality, reduce branch mispredictions, vectorize hot loops
+6. ~~Configuration constant changes~~ — only as a last resort when code changes are not feasible
+
+Configuration tuning (buffer sizes, cache sizes, thread pool counts) is operational tuning, not software optimization. The framework exists to find and make code-level improvements.
+
+When analyzing a hot path, ask:
+- "Can this allocation be avoided entirely?"
+- "Can this object be reused instead of re-created?"
+- "Can this copy be eliminated with a reference or move?"
+- "Is this the right data structure for this access pattern?"
+- "Is this algorithm optimal for the data size?"
+
+### Experiment Loop
+
 Once setup is confirmed, run this loop **forever** until the human stops you:
 
 ```
