@@ -3,6 +3,8 @@ set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
+SCRIPT_NAME="workload-local"
+source "$FRAMEWORK_ROOT/envs/base/log.sh"
 
 # macOS compatibility
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")
@@ -14,8 +16,10 @@ fi
 export SERVICE_HOST="${SERVICE_HOST:-localhost}"
 export SERVICE_PORT="${SERVICE_PORT:-8080}"
 
-# 2. Warmup: wait for service to stabilize
-echo "[workload] Warming up for ${WARMUP_SECONDS}s..."
+# 2. Warmup
+log_separator "WORKLOAD (local): $TARGET"
+log_step "BEFORE" "Target: $SERVICE_HOST:$SERVICE_PORT | Warmup: ${WARMUP_SECONDS}s | Runs: $WORKLOAD_RUNS"
+log_status "Warming up for ${WARMUP_SECONDS}s..."
 sleep "$WARMUP_SECONDS"
 
 # 3. Health check (fix: redirect curl stdout to /dev/null to avoid polluting HEALTH_OK)
@@ -47,8 +51,8 @@ for i in $(seq 1 "$WORKLOAD_RUNS"); do
   WORKLOAD_EXIT=$?
   set -e
   if [ $WORKLOAD_EXIT -ne 0 ]; then
-    echo "[workload] WARNING: Run $i failed (exit $WORKLOAD_EXIT)"
+    log_warn "Run $i failed (exit $WORKLOAD_EXIT)"
   fi
 done
 
-echo "[workload] Done. Raw results in $WORKLOAD_METRICS_FILE"
+log_step "AFTER" "Workload complete | Results: $WORKLOAD_METRICS_FILE"
