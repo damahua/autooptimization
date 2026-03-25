@@ -121,9 +121,54 @@ Now cross-reference the candidates from Phase 1 against the profile data from Ph
 | U1 | ... | ... | 12.5MB (1.5% of peak) | skipped |
 ```
 
+## Phase 2.75: Design Targeted Workload Per Candidate
+
+**This is the critical step that was missing.** The generic workload may not exercise the specific code path a candidate targets. Before implementing any candidate, design a workload that **guarantees** the targeted path is stressed.
+
+For each CONFIRMED candidate:
+
+```
+22. Identify the exact code path the candidate optimizes
+    - What function/data structure is changed?
+    - What allocation/computation pattern triggers it?
+    - At what data scale does the inefficiency become significant?
+
+23. Design a stress test query/workload that exercises that specific path:
+    - The workload MUST produce allocations large enough to trigger the targeted inefficiency
+    - Calculate: how many iterations, what data size, what key cardinality is needed
+    - Example: if optimizing Arena::realloc waste for large aggregate states,
+      the workload must produce per-key states >1MB (not 400 bytes)
+
+24. Verify the workload triggers the path BEFORE implementing:
+    - Deploy unmodified baseline
+    - Run the targeted workload
+    - Profile and check: does the targeted function/path appear as a significant consumer?
+    - If NOT → the workload is wrong, redesign it
+    - If YES → the workload is valid, proceed to implementation
+
+25. Write the stress test to results/<target>/<env>/workloads/exp<NNN>-workload.sh
+    or add targeted queries to the profile workload
+```
+
+**Workload design checklist:**
+- [ ] Does the workload force the targeted code path to execute? (not just nearby code)
+- [ ] Is the data scale large enough for the inefficiency to manifest? (e.g., per-key state > threshold that triggers realloc)
+- [ ] Can we verify the path is exercised via profiling? (e.g., ArenaAllocChunks > 0, specific function appears in CPU profile)
+- [ ] Is the workload reproducible? (deterministic data generation, fixed row counts)
+
+**Example — Arena::realloc waste candidate:**
+```
+BAD workload:  groupArray on 100K keys × 50 values = 400 bytes/key (never reallocs)
+GOOD workload: groupArray on 1K keys × 100K values = 800KB/key (forces many reallocs per key)
+```
+
+The good workload produces per-key states that overflow Arena chunk boundaries, triggering the exact realloc → copy → waste path the optimization targets.
+
+Update candidates.md with the targeted workload for each confirmed candidate.
+
 ## Phase 3: Experiment Loop — Profile-Validated Only
 
-Once candidates are validated, run experiments **only on confirmed candidates**. Every experiment includes profiling for before/after comparison.
+Once candidates are validated AND targeted workloads are designed, run experiments **only on confirmed candidates with their targeted workloads**. Every experiment includes profiling for before/after comparison.
 
 ### Optimization Priority
 
@@ -151,35 +196,64 @@ Run this loop **forever** until the human stops you:
 2.  If no confirmed candidates remain:
     - Rescan code for new ideas (go back to Phase 1 step 6)
     - Or report to human: "All confirmed candidates exhausted"
-3.  Read the profile analysis for the parent (baseline or last keep)
-4.  Determine parent: last "keep" branch from results.tsv (or baseline)
-5.  cd targets/<target>/src
+3.  Read the targeted workload for this candidate (from Phase 2.75)
+4.  Verify the targeted workload exercises the code path:
+    - Deploy unmodified parent, run targeted workload, profile
+    - Confirm the targeted function/allocation appears as significant in profile
+    - If NOT: redesign workload, do not proceed with implementation
+5.  Determine parent: last "keep" branch from results.tsv (or baseline)
+6.  cd targets/<target>/src
     git checkout <parent_branch>
     git checkout -b autoopt/<target>/<tag>-exp<NNN>
-6.  Implement the optimization targeting the CONFIRMED hot path
-7.  git add -A && git commit -m "[autoopt] exp<NNN>: <description>"
-8.  cd ../../..
-9.  ./run.sh <env> build.sh <target>    > results/<target>/<env>/logs/exp<NNN>-build.log 2>&1
-10. ./run.sh <env> deploy.sh <target>   > results/<target>/<env>/logs/exp<NNN>-deploy.log 2>&1
-11. ./run.sh <env> workload.sh <target> > results/<target>/<env>/logs/exp<NNN>-workload.log 2>&1
-12. PROFILE_LABEL=exp<NNN> ./run.sh <env> profile.sh <target>
-13. ./run.sh <env> collect.sh <target>  > results/<target>/<env>/logs/exp<NNN>-metrics.log
-14. PROFILE_LABEL=exp<NNN> PROFILE_COMPARE_TO=<parent_label> ./run.sh <env> analyze.sh <target>
-15. ./run.sh <env> validate.sh <target> > results/<target>/<env>/logs/exp<NNN>-validate.log 2>&1
-16. Read primary metric from exp<NNN>-metrics.log
-17. Read profile diff from profiles/exp<NNN>-vs-<parent>-diff.txt
-18. Check constraints from target.md
-19. Decision:
-    - Metric improved AND profile diff confirms targeted area improved → KEEP
-    - Profile diff confirms targeted area improved but metric within noise → KEEP (profile-confirmed)
+7.  Implement the optimization targeting the CONFIRMED hot path
+8.  git add -A && git commit -m "[autoopt] exp<NNN>: <description>"
+9.  cd ../../..
+10. Build: ./run.sh <env> build.sh <target>
+11. Run N>=3 measurement iterations (deploy → targeted workload → collect → teardown):
+    For each run:
+      a. ./run.sh <env> deploy.sh <target>
+      b. Run the TARGETED workload (not generic) for this candidate
+      c. ./run.sh <env> collect.sh <target>  — record peak_rss_mb
+      d. On first run only: PROFILE_LABEL=exp<NNN> ./run.sh <env> profile.sh <target>
+      e. ./run.sh <env> teardown.sh <target>
+    Collect all N metric values.
+12. Also run N>=3 iterations with UNMODIFIED parent (same targeted workload):
+    - If baseline runs for this workload already exist, reuse them
+    - Otherwise run N>=3 baseline iterations now
+13. PROFILE_LABEL=exp<NNN> PROFILE_COMPARE_TO=<parent_label> ./run.sh <env> analyze.sh <target>
+14. ./run.sh <env> validate.sh <target>
+15. Compute statistics:
+    - Baseline: mean, stddev, range (N values)
+    - Experiment: mean, stddev, range (N values)
+    - Delta of means, and whether distributions overlap
+16. Decision (requires BOTH profile evidence AND statistical significance):
+    - Mean improved > 1 stddev AND profile diff confirms targeted area → KEEP
+    - Distributions overlap (delta < stddev) → DISCARD (not significant)
     - Profile diff shows NO change in targeted area → DISCARD (wrong hypothesis)
     - Metric regressed → DISCARD
-    - Otherwise → DISCARD
-20. Record in results.tsv (include profile_summary column)
-21. ./run.sh <env> teardown.sh <target>
-22. Update summary.md and candidates.md
-23. Repeat from step 1
+17. Record in results.tsv (include profile_summary AND multi-run stats)
+18. Update summary.md and candidates.md
+19. Repeat from step 1
 ```
+
+### Why Multi-Run Matters
+
+Process-level RSS (VmHWM) varies 10-20% between identical runs due to:
+- jemalloc/malloc internal state and thread cache sizing
+- Kernel memory management decisions (page coalescing, THP)
+- Background processes (ClickHouse merges, log flushes, compaction)
+- Timing of when peak occurs relative to measurement
+
+A single run showing "-7.8%" means nothing if the natural variance is ±17%. The framework MUST collect multiple measurements to distinguish signal from noise.
+
+### Why Targeted Workloads Matter
+
+A generic workload may never exercise the specific code path being optimized:
+- Optimizing Arena::realloc waste requires per-key states large enough to trigger realloc (>chunk size)
+- Optimizing hash table growth requires enough distinct keys to trigger multiple resizes
+- Optimizing sort buffer allocation requires ORDER BY on enough data to spill
+
+If the workload doesn't trigger the targeted path, the optimization will show zero effect regardless of whether the code change is correct. **Verify the path is exercised before implementing.**
 
 ## Rules
 
