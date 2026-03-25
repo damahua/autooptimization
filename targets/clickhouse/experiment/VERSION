@@ -1,0 +1,29 @@
+ClickHouse v25.8.9.20-lts
+Tag: v25.8.9.20-lts
+Commit: a1f4cd9c (Merge pull request #88147 from ClickHouse/backport/25.8/88095)
+Repository: https://github.com/ClickHouse/ClickHouse
+
+Build Configuration:
+  Compiler: clang-19 (Ubuntu clang version 19.1.7)
+  Build type: Release
+  Platform: aarch64-linux-gnu (Docker on macOS ARM64)
+  CMake flags:
+    -DENABLE_TESTS=OFF
+    -DENABLE_UTILS=OFF
+    -DENABLE_THINLTO=OFF
+    -DUSE_UNWIND=ON
+    -DENABLE_EMBEDDED_COMPILER=OFF
+    -DENABLE_LIBRARIES=OFF
+    -DENABLE_ODBC=OFF
+    -DENABLE_GRPC=OFF
+    -DENABLE_KAFKA=OFF
+    -DENABLE_NATS=OFF
+    -DENABLE_RABBITMQ=OFF
+    -DENABLE_HDFS=OFF
+    -DENABLE_S3=OFF
+    -DENABLE_AZURE_BLOB_STORAGE=OFF
+    -DWERROR=OFF
+    -DNO_ARMV81_OR_HIGHER=1
+
+NOTE: Both baseline and experiment use IDENTICAL build configuration.
+The only difference is the Arena.h patch (see patches/arena-freelist.patch).

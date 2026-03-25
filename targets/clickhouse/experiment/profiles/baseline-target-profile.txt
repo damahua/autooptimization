@@ -1,0 +1,37 @@
+=== CLICKHOUSE PROFILE: baseline ===
+
+--- Per-Query Memory Usage (top 20 by peak memory) ---
+peak_memory_mb  read_rows    duration_ms  query_preview
+907.4	5000000	306	 SELECT key, groupArray(value) FROM string_test GROUP BY key LIMIT 1000 FORMAT N
+652.7	5000000	392	 SELECT key, count(), avg(value), max(value) FROM string_test GROUP BY key FORMA
+404.2	1000000	533	INSERT INTO wide_test SELECT rand() / 4294967295.0 * 100, rand() / 4294967295.0 
+74.7	5000000	239	 INSERT INTO string_test SELECT     number AS id,     concat(\'key_\', toString(nu
+63.9	5000000	86	 SELECT * FROM string_test ORDER BY value LIMIT 10000 FORMAT Null 
+12.5	1000000	34	 SELECT avg(col_1), avg(col_2), avg(col_3), avg(col_4), avg(col_5),        avg(c
+1.2	0	2	CREATE TABLE wide_test (col_1 Float64, col_2 Float64, col_3 Float64, col_4 Float
+1.1	0	96	 CREATE TABLE string_test (     id UInt64,     key String,     value Float64 ) E
+1	0	0	DROP TABLE IF EXISTS wide_test
+1	0	0	SET log_queries=1
+1	0	0	DROP TABLE IF EXISTS string_test
+1	0	0	DROP TABLE IF EXISTS string_test
+1	0	0	DROP TABLE IF EXISTS wide_test
+
+--- Arena Allocation per Query ---
+arena_chunks  arena_mb     peak_memory_mb  query_preview
+32	512	907.4	 SELECT key, groupArray(value) FROM string_test GROUP BY key LIMIT 1000 FORMAT N
+30	256	652.7	 SELECT key, count(), avg(value), max(value) FROM string_test GROUP BY key FORMA
+2	0	12.5	 SELECT avg(col_1), avg(col_2), avg(col_3), avg(col_4), avg(col_5),        avg(c
+
+--- Aggregate ProfileEvents (allocation-related) ---
+Row 1:
+──────
+total_arena_chunks: 64
+total_arena_mb:     768
+total_realtime_us:  4846270 -- 4.85 million
+max_peak_memory_mb: 907.4
+query_count:        13
+
+--- Memory Allocation Traces (top functions by allocated bytes) ---
+(trace_log not available — enable with SET allow_introspection_functions=1)
+
+=== END CLICKHOUSE PROFILE ===
