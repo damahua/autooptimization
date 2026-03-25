@@ -39,3 +39,34 @@ To properly target Arena waste, we need:
 ### Measurement Quality
 
 The targeted workload produced **much more stable measurements** (stddev 2 MB, 0.09% variance) compared to the generic workload (stddev 77 MB, 17% variance). This confirms the framework improvement: targeted workloads give reliable results.
+
+## Instrumentation Results
+
+### Arena Counter Data (from instrumented build)
+
+Workload: `groupArray(toString(number))` with 1K keys × 50K values (50M rows)
+Arena: 767 MB allocated, 756 MB used, 11 MB waste (1.4%)
+
+| Method | Calls | Bytes | Significance |
+|--------|-------|-------|-------------|
+| **alignedAlloc** | **50,008,000** | **756 MB** | 100% of Arena usage |
+| alloc | 0 | 0 | Never called |
+| realloc | 0 | 0 | **NEVER CALLED — free-list target is dead code** |
+| allocContinue | 0 | 0 | **NEVER CALLED — quadratic waste never occurs** |
+
+### Conclusion
+
+Arena is 98.6% efficient on this workload. There is no realloc or allocContinue waste to optimize. The 50M alignedAlloc calls are fixed-size aggregate state headers (one per hash table insert), which never need reallocation.
+
+The 2204 MB peak memory comes from:
+- Arena: 767 MB (35%) — aggregate state headers for 50M rows
+- Remaining ~1437 MB — PODArray (system allocator) for groupArray internal arrays, hash table buffers, string data, column storage
+
+### What This Means for Future Optimization
+
+To reduce ClickHouse memory on aggregation workloads, the target should be:
+1. **PODArray / system allocator** — where groupArray stores its actual arrays (~60% of peak)
+2. **Hash table resize double-buffer** — where both old and new hash table coexist during resize
+3. **NOT Arena** — Arena is already efficient (1.4% waste)
+
+The ClickHouse devs' comment about "quadratic waste in allocContinue" is real but only triggers for specific code paths (ColumnString serialization, not aggregate functions). A workload that exercises ColumnString::serializeValueIntoArena would be needed to trigger it.
