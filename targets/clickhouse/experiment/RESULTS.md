@@ -121,3 +121,26 @@ Need to pre-reserve `chars` with the total byte count. Options:
 3. Change groupArray to track cumulative byte count during aggregation and expose it
 
 The fix is feasible but requires touching ColumnString + groupArray aggregate function code.
+
+## exp003: ColumnString chars reservation — NO IMPACT
+
+Baseline N=3: mean 2262.3 MB
+exp003 N=3: mean 2264.0 MB
+Delta: +1.7 MB (0%) — zero effect
+
+### Why
+The `reserve(places.size())` call happens with places.size()=1000 (group count).
+ColumnString::reserve estimates chars as 1000 × 32 bytes = 32KB (because the
+column is empty when reserve is called, so there's no average string size data).
+The actual chars needed is ~500 MB. The reservation is off by 4 orders of magnitude.
+
+### What Would Actually Work
+The aggregate function (groupArray) needs to expose its total result size
+BEFORE materialization. This requires an API change:
+- Add `IAggregateFunctionHelper::estimateResultBytes(places, row_count)` 
+- groupArray would compute: sum over all groups of (element_count × avg_element_size)
+- Aggregator calls this before insertResultIntoBatch to reserve the right amount
+
+This is a meaningful architectural change to the aggregate function interface,
+not a simple fix. It would benefit ALL aggregate functions that produce
+variable-size results (groupArray, groupArrayArray, groupUniqArray, etc.).
