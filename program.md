@@ -1,6 +1,6 @@
 # autooptimization
 
-This is a framework for autonomous AI-driven code optimization. Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
+Autonomous AI-driven code optimization framework. Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
 ## Prerequisites
 
@@ -8,330 +8,197 @@ Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl
 
 ## Setup
 
-To set up a new optimization run, work with the user to:
-
-1. **Agree on target, environment, metric, and tag:**
-   - Target: which project to optimize (e.g., `clickhouse`)
-   - Environment: where to deploy (e.g., `local`)
-   - Primary metric: what to optimize (e.g., `peak_rss_mb`)
-   - Tag: identifier for this run (e.g., `mar24`)
-
-2. **Read the target config:**
-   - `targets/<target>/target.md` — repo, metric, scope, constraints
-   - `targets/<target>/hints.md` — optimization hints (if exists)
-
-3. **Clone target source** (if not already present):
-   ```bash
-   REPO_URL=<from target.md>
-   BRANCH=<from target.md>
-   git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "targets/<target>/src"
-   ```
-
-4. **Verify environment:**
-   ```bash
-   which docker kubectl git
-   kubectl --context kind-autoopt cluster-info  # for local env
-   docker info
-   ```
-
+1. **Agree on target, environment, metric, and tag**
+2. **Read target config:** `targets/<target>/target.md`, `targets/<target>/hints.md`
+3. **Clone target source** (shallow, selective submodules for large C++ projects)
+4. **Verify environment:** docker, kubectl, kind cluster
 5. **Initialize results:**
    ```bash
    mkdir -p "results/<target>/<env>/logs" "results/<target>/<env>/profiles"
-   echo -e "exp_id\tbranch\tparent_branch\tcommit\tmetric_name\tmetric_value\tbaseline_value\tdelta_vs_baseline\tdelta_vs_parent\tcpu_pct\tlatency_p99_ms\terror_rate\tpod_restarts\tstatus\tprofile_summary\tdescription" > "results/<target>/<env>/results.tsv"
    ```
 
-## Phase 1: Scan — Enumerate Optimization Candidates
+## Phase 1: Deep Profile — Find the Real Bottleneck
 
-Before running any experiments, scan the target source code to enumerate ALL possible code-level optimizations.
+**This is the most important phase.** Do NOT scan code or guess optimizations. Profile FIRST with stack-level allocation tracing to find WHERE resources are actually spent.
 
-```
-6. Read target source code in editable scope (from target.md)
-7. Read hints.md if present
-8. List ALL possible code-level optimizations as candidates
-9. Write candidates to results/<target>/<env>/candidates.md
-```
+### 1a. Build with Debug Symbols
 
-Each candidate should include:
-- **ID**: C1, C2, C3...
-- **Description**: What the optimization does
-- **Files**: Which source files would be modified
-- **Hypothesis**: Why this should reduce the primary metric
-- **Expected impact**: Rough estimate (high/medium/low)
-
-## Phase 2: Profile Baseline — Validate Candidates
-
-Profile the unmodified code to establish WHERE resources are actually spent. This is the critical step that prevents wasted experiments.
+Build with `RelWithDebInfo` (or equivalent) so profiling tools can resolve function names and source locations. Without symbols, profiling data is useless.
 
 ```
-10. Create baseline branch:
-    cd targets/<target>/src
-    git checkout -b autoopt/<target>/<tag>-baseline
-    cd ../../..
-
-11. Build, deploy, run workload:
-    ./run.sh <env> build.sh <target>
-    ./run.sh <env> deploy.sh <target>
-    ./run.sh <env> workload.sh <target>
-
-12. Profile baseline:
-    PROFILE_LABEL=baseline ./run.sh <env> profile.sh <target>
-
-13. Collect metrics:
-    ./run.sh <env> collect.sh <target> > results/<target>/<env>/logs/baseline-metrics.log
-
-14. Analyze profile:
-    PROFILE_LABEL=baseline ./run.sh <env> analyze.sh <target>
-
-15. Validate baseline:
-    ./run.sh <env> validate.sh <target>
-
-16. Teardown:
-    ./run.sh <env> teardown.sh <target>
-
-17. Record baseline in results.tsv
+-DCMAKE_BUILD_TYPE=RelWithDebInfo  # not Release
 ```
 
-## Phase 2.5: Validate Candidates Against Profile
+### 1b. Deploy and Run Representative Workload
 
-Now cross-reference the candidates from Phase 1 against the profile data from Phase 2.
+The workload should stress the primary metric (e.g., peak_rss_mb for memory, latency for CPU). Use production-representative data sizes, not toy data.
 
-```
-18. Read results/<target>/<env>/profiles/baseline-analysis.txt
-19. For each candidate:
-    - Does the profile show the targeted code path is a significant consumer?
-    - Threshold: >5% of total RSS or >5% of CPU samples
-    - Mark as CONFIRMED or UNCONFIRMED
-20. Update candidates.md with profile evidence for each candidate
-21. Sort CONFIRMED candidates by expected impact (profile-weighted)
-```
+### 1c. Collect Stack-Level Allocation Traces
 
-**candidates.md format:**
+**Use the target's built-in profiling tools first.** Examples:
+- **ClickHouse:** `system.trace_log` with `trace_type='Memory'`, `memory_profiler_step=1048576`
+- **Go:** `pprof` heap profile via HTTP endpoint
+- **Python:** `tracemalloc` with stack traces
+- **Generic C/C++:** `heaptrack`, `jemalloc prof` (`MALLOC_CONF=prof:true`), or `valgrind --tool=massif`
 
-```markdown
-# Optimization Candidates
+**If no built-in tools exist**, use:
+- `/proc/PID/smaps` for memory region breakdown (coarse)
+- `perf record -g` for CPU flame graphs
 
-## Confirmed (profile-validated hot paths)
-| ID | Description | Files | Profile Evidence | Expected Impact | Status |
-|----|-------------|-------|-----------------|-----------------|--------|
-| C1 | ... | ... | heap=512MB (56% of peak) | high | pending |
+### 1d. Identify the EXACT Allocation Path
 
-## Unconfirmed (not significant in profile)
-| ID | Description | Files | Profile Evidence | Status |
-|----|-------------|-------|-----------------|--------|
-| U1 | ... | ... | 12.5MB (1.5% of peak) | skipped |
-```
+From the traces, answer:
+- **Which function** allocates the most bytes? (not "which module" — the FUNCTION)
+- **What call stack** leads to it? (at least 5 frames deep)
+- **What data structure** is growing? (PODArray, Arena, std::vector, hash table buffer?)
+- **How much** does it allocate? (absolute bytes, % of total)
+- **WHY** is it allocating? (realloc doubling, new element insertion, copy-on-write, serialization?)
 
-## Phase 2.75: Design Targeted Workload Per Candidate
+**Output:** Write `profiles/baseline-stacks.txt` with the top 10 allocation paths and their byte counts.
 
-**This is the critical step that was missing.** The generic workload may not exercise the specific code path a candidate targets. Before implementing any candidate, design a workload that **guarantees** the targeted path is stressed.
+### 1e. Add Custom Instrumentation (if needed)
 
-For each CONFIRMED candidate:
+If the profiler gives aggregate data but not enough detail (e.g., "Arena = 56% of peak" but which Arena method?), add lightweight counters directly to the suspected hot path:
 
-```
-22. Identify the exact code path the candidate optimizes
-    - What function/data structure is changed?
-    - What allocation/computation pattern triggers it?
-    - At what data scale does the inefficiency become significant?
-
-23. Design a stress test query/workload that exercises that specific path:
-    - The workload MUST produce allocations large enough to trigger the targeted inefficiency
-    - Calculate: how many iterations, what data size, what key cardinality is needed
-    - Example: if optimizing Arena::realloc waste for large aggregate states,
-      the workload must produce per-key states >1MB (not 400 bytes)
-
-24. Verify the workload triggers the path BEFORE implementing:
-    - Deploy unmodified baseline
-    - Run the targeted workload
-    - Profile and check: does the targeted function/path appear as a significant consumer?
-    - If NOT → the workload is wrong, redesign it
-    - If YES → the workload is valid, proceed to implementation
-
-25. Write the stress test to results/<target>/<env>/workloads/exp<NNN>-workload.sh
-    or add targeted queries to the profile workload
+```cpp
+// Example: count calls and bytes per method
+++stats_alloc_calls; stats_alloc_bytes += size;
+++stats_realloc_calls; stats_realloc_bytes += old_size;
 ```
 
-**Workload design checklist:**
-- [ ] Does the workload force the targeted code path to execute? (not just nearby code)
-- [ ] Is the data scale large enough for the inefficiency to manifest? (e.g., per-key state > threshold that triggers realloc)
-- [ ] Can we verify the path is exercised via profiling? (e.g., ArenaAllocChunks > 0, specific function appears in CPU profile)
-- [ ] Is the workload reproducible? (deterministic data generation, fixed row counts)
+Log stats in the destructor for objects > 10MB. This gives **ground truth** about which methods are actually called, not which methods COULD be called based on code reading.
 
-**Example — Arena::realloc waste candidate:**
+**This step prevented us from wasting experiments on Arena::realloc (0 calls) and Arena::allocContinue (0 calls) when 100% of allocation was through alignedAlloc.**
+
+## Phase 2: Identify Candidates from Profile Data
+
+**Now** scan source code — but only the functions identified in Phase 1 traces. Don't scan broadly; focus on the specific call stacks from the profiler.
+
 ```
-BAD workload:  groupArray on 100K keys × 50 values = 400 bytes/key (never reallocs)
-GOOD workload: groupArray on 1K keys × 100K values = 800KB/key (forces many reallocs per key)
+For each top allocation path from Phase 1:
+  - Read the source code for that specific function
+  - Understand WHY it allocates that much
+  - Identify whether it's: avoidable, reducible, or deferrable
+  - Propose a code-level change (data structure, algorithm, or logic)
 ```
 
-The good workload produces per-key states that overflow Arena chunk boundaries, triggering the exact realloc → copy → waste path the optimization targets.
+Write candidates to `candidates.md` with:
+- **Profile evidence:** exact function, bytes, % of total (from Phase 1)
+- **Root cause:** why the allocation happens (realloc doubling, unbounded growth, etc.)
+- **Proposed fix:** what structural change would reduce it
+- **Targeted workload:** a query/test that exercises THIS specific path at scale
 
-Update candidates.md with the targeted workload for each confirmed candidate.
+### Candidate Validation Checklist
 
-## Phase 3: Experiment Loop — Profile-Validated Only
+Before any candidate proceeds:
+- [ ] Profile stack trace shows this function as a top allocator (>5% of total)
+- [ ] Root cause is understood (not guessed from code reading)
+- [ ] Proposed fix is structural (data structure, algorithm, logic — NOT constant/threshold tuning)
+- [ ] Targeted workload is designed that exercises the EXACT code path
+- [ ] Size calculation shows the workload produces allocations large enough to trigger the inefficiency
 
-Once candidates are validated AND targeted workloads are designed, run experiments **only on confirmed candidates with their targeted workloads**. Every experiment includes profiling for before/after comparison.
+## Phase 2.75: Verify Workload Triggers the Path
 
-### Optimization Priority
+Deploy unmodified baseline, run targeted workload, profile again:
+- Does the targeted function appear in the top allocators?
+- Are the allocation sizes in the expected range?
+- If NOT → the workload is wrong, redesign it. DO NOT PROCEED.
 
-**Focus on real code-level optimizations — NOT configuration changes.**
+**This step prevented us from optimizing Arena::realloc when groupArray doesn't use Arena for its array growth — it uses PODArray via the system allocator.**
 
-Priority order (highest first):
-1. **Data structure changes** — replace a container with a more efficient one
-2. **Memory allocation patterns** — add pooling, reuse, eliminate copies
-3. **Algorithmic improvements** — reduce complexity, eliminate redundant work
-4. **Processing logic optimization** — move semantics, avoid re-computation
-5. **CPU optimization** — cache locality, branch prediction, vectorization
+## Phase 3: Experiment Loop
 
-Configuration tuning (buffer sizes, growth factors, threshold values) is NOT code optimization. Ask:
-- "Can this allocation be avoided entirely?"
-- "Can this object be reused instead of re-created?"
-- "Is this the right data structure for this access pattern?"
-- "Is this algorithm optimal for the data size?"
+Run experiments **only on profile-confirmed candidates with verified workloads.**
 
 ### The Loop
 
-Run this loop **forever** until the human stops you:
-
 ```
-1.  Read candidates.md — pick top CONFIRMED candidate not yet tried
-2.  If no confirmed candidates remain:
-    - Rescan code for new ideas (go back to Phase 1 step 6)
-    - Or report to human: "All confirmed candidates exhausted"
-3.  Read the targeted workload for this candidate (from Phase 2.75)
-4.  Verify the targeted workload exercises the code path:
-    - Deploy unmodified parent, run targeted workload, profile
-    - Confirm the targeted function/allocation appears as significant in profile
-    - If NOT: redesign workload, do not proceed with implementation
-5.  Determine parent: last "keep" branch from results.tsv (or baseline)
-6.  cd targets/<target>/src
-    git checkout <parent_branch>
-    git checkout -b autoopt/<target>/<tag>-exp<NNN>
-7.  Implement the optimization targeting the CONFIRMED hot path
-8.  git add -A && git commit -m "[autoopt] exp<NNN>: <description>"
-9.  cd ../../..
-10. Build: ./run.sh <env> build.sh <target>
-11. Run N>=3 measurement iterations (deploy → targeted workload → collect → teardown):
-    For each run:
-      a. ./run.sh <env> deploy.sh <target>
-      b. Run the TARGETED workload (not generic) for this candidate
-      c. ./run.sh <env> collect.sh <target>  — record peak_rss_mb
-      d. On first run only: PROFILE_LABEL=exp<NNN> ./run.sh <env> profile.sh <target>
-      e. ./run.sh <env> teardown.sh <target>
-    Collect all N metric values.
-12. Also run N>=3 iterations with UNMODIFIED parent (same targeted workload):
-    - If baseline runs for this workload already exist, reuse them
-    - Otherwise run N>=3 baseline iterations now
-13. PROFILE_LABEL=exp<NNN> PROFILE_COMPARE_TO=<parent_label> ./run.sh <env> analyze.sh <target>
-14. ./run.sh <env> validate.sh <target>
-15. Compute statistics:
-    - Baseline: mean, stddev, range (N values)
-    - Experiment: mean, stddev, range (N values)
-    - Delta of means, and whether distributions overlap
-16. Decision (requires BOTH profile evidence AND statistical significance):
-    - Mean improved > 1 stddev AND profile diff confirms targeted area → KEEP
-    - Distributions overlap (delta < stddev) → DISCARD (not significant)
-    - Profile diff shows NO change in targeted area → DISCARD (wrong hypothesis)
-    - Metric regressed → DISCARD
-17. Record in results.tsv (include profile_summary AND multi-run stats)
-18. Update summary.md and candidates.md
-19. Repeat from step 1
+1.  Pick top confirmed candidate from candidates.md
+2.  If none remain: report to human or re-profile with different workload
+3.  Implement the optimization
+4.  Build (Release mode for benchmarking — debug symbols not needed here)
+5.  Run N>=3 iterations with TARGETED workload:
+      deploy → workload → collect RSS → teardown
+6.  Run N>=3 baseline iterations (reuse if already collected for this workload)
+7.  Compute statistics: mean, stddev, range for both
+8.  Decision:
+    - Mean improved > 1 stddev AND distributions don't overlap → KEEP
+    - Distributions overlap → DISCARD (not statistically significant)
+    - Profile shows no change in targeted function → DISCARD (wrong hypothesis)
+9.  Record in results.tsv with multi-run stats
+10. Repeat
 ```
 
-### Why Multi-Run Matters
+### Output Types
 
-Process-level RSS (VmHWM) varies 10-20% between identical runs due to:
-- jemalloc/malloc internal state and thread cache sizing
-- Kernel memory management decisions (page coalescing, THP)
-- Background processes (ClickHouse merges, log flushes, compaction)
-- Timing of when peak occurs relative to measurement
+Not every finding leads to a code PR. The right output depends on what you find:
 
-A single run showing "-7.8%" means nothing if the natural variance is ±17%. The framework MUST collect multiple measurements to distinguish signal from noise.
+| Finding | Right Output |
+|---------|-------------|
+| Small, self-contained fix with measured impact | **Pull Request** with benchmark data |
+| Design-level problem requiring API changes | **Issue** with profiling evidence and proposed design |
+| No optimization opportunity after profiling | **Report** documenting what was investigated and why it's not a target |
 
-### Why Targeted Workloads Matter
+**An issue with stack traces and a concrete proposal is more valuable than a PR with no measurable impact.**
 
-A generic workload may never exercise the specific code path being optimized:
-- Optimizing Arena::realloc waste requires per-key states large enough to trigger realloc (>chunk size)
-- Optimizing hash table growth requires enough distinct keys to trigger multiple resizes
-- Optimizing sort buffer allocation requires ORDER BY on enough data to spill
+## Optimization Priority
 
-If the workload doesn't trigger the targeted path, the optimization will show zero effect regardless of whether the code change is correct. **Verify the path is exercised before implementing.**
+**Code-level only — NOT configuration changes.**
+
+1. **Data structure changes** — replace a container with a more efficient one
+2. **Memory lifecycle changes** — pre-reserve, pool, recycle, release earlier
+3. **Algorithm changes** — reduce complexity, eliminate redundant work
+4. **Logic changes** — move semantics, lazy evaluation, deferred computation
+
+**NOT optimization:**
+- Changing growth factors (2x → 1.5x)
+- Changing thresholds (128MB → 64MB)
+- Changing initial sizes (4096 → 1024)
+- Changing buffer counts or pool sizes
+
+Ask: "Does this change HOW the code works, or just WHAT numbers it uses?"
 
 ## Rules
 
-- **Only edit files** in editable scope from target.md — never framework scripts
-- **Profile before experimenting** — never implement an optimization without profile evidence
-- **Build/deploy crash handling:** try to fix. After 3 consecutive failures on the same experiment, discard it and try a new idea
-- **Log everything** to results.tsv regardless of outcome
-- **Never stop** — iterate until human interrupts
-- **Simpler is better** — same metric with less code is a win
-- **One agent per target+env** — do not run concurrent experiments on the same target+environment
-- **Safety:** if SAFETY_LEVEL=approval_required (check env.conf), pause after git commit and show the diff before deploying
-- **No config tuning** — do not change constants, thresholds, buffer sizes, or growth factors as optimizations
+- **Profile before coding** — never implement without stack-level allocation evidence
+- **Verify workload exercises the path** — before implementing, not after
+- **Multi-run benchmarks** — N>=3, distributions must not overlap for KEEP
+- **Instrument when uncertain** — add counters to get ground truth, don't guess from code
+- **Right output type** — PR for measured fixes, issue for design proposals, report for dead ends
+- **Only edit files** in editable scope from target.md
+- **No config tuning** — constants, thresholds, buffer sizes are NOT optimizations
+- **Log everything** — results.tsv captures all experiments including failures
 
-## Results Format
+## Lessons Learned (from ClickHouse experiments)
 
-### results.tsv (tab-separated)
+These are hard-won lessons from 18+ experiments across 3 pipeline versions:
 
-```
-exp_id	branch	parent_branch	commit	metric_name	metric_value	baseline_value	delta_vs_baseline	delta_vs_parent	cpu_pct	latency_p99_ms	error_rate	pod_restarts	status	profile_summary	description
-```
+1. **Aggregate profiling metrics (/proc/status, query_log) don't tell you WHERE memory goes.** You need stack traces. "Arena = 56% of peak" is not actionable; "PODArray::resize called from GroupArrayGeneralImpl::insertResultInto = 536MB" IS actionable.
 
-Status values: `keep`, `discard`, `crash`, `invalid`, `constraint_violation`, `timeout`
+2. **Code reading produces hypotheses, not facts.** ClickHouse devs documented "quadratic waste in allocContinue" but our workload never triggered it (0 calls). Always validate hypotheses with instrumentation before implementing.
 
-Profile summary: one-line evidence, e.g. `"heap -40.3MB (-4.1%), top: Arena::addMemoryChunk -14.6%"`
+3. **Your optimization must target the function that ACTUALLY allocates, not the one that LOOKS like it should.** Arena::realloc was the obvious target but had 0 calls. The real allocator was PODArray::resize through the system allocator, called during result materialization (not during aggregation).
 
-### Structured commit messages
+4. **Generic workloads may never exercise the targeted path.** 100K keys × 50 values = 400 bytes/key — too small to trigger realloc. 1K keys × 50K values = 500MB total — exercises the path. Size calculations matter.
 
-```
-[autoopt] exp003: replace hash map with vector in MergeTree reader
+5. **Single-run results are noise.** Process RSS varies 10-20% between identical runs with generic workloads, and ~0.1% with targeted workloads. Always run N>=3 and compare distributions.
 
-Target: clickhouse
-Environment: local
-Metric: peak_rss_mb
-Baseline: 1335.2
-Parent: 1300.1 (exp001)
-Result: 1260.4
-Delta vs baseline: -5.6%
-Delta vs parent: -3.1%
-Profile evidence: heap 980MB -> 940MB (-4.1%), Arena::addMemoryChunk -14.6% samples
-Status: keep
-```
+6. **Sometimes the right contribution is an issue, not a PR.** ClickHouse's PODArray realloc peak during result materialization requires an API change (estimateResultBytes). Filing an issue with profiling evidence is more valuable than a PR that doesn't work.
 
-### summary.md
-
-After each experiment, regenerate `results/<target>/<env>/summary.md` with:
-- Best result and current frontier branch
-- Full experiment timeline table (with profile_summary column)
-- Frontier lineage (chain of "keep" experiments)
-- What worked / what didn't work (with profile evidence)
-- Constraint status
-- Profile highlights (top memory consumers, how they changed)
+7. **Build with debug symbols for profiling, Release for benchmarking.** addressToSymbol/addressToLine return empty strings without debug info. Switch to Release for the actual A/B benchmark.
 
 ## Resume Protocol
 
-If you are resuming a previous run:
-
 ```bash
-# Find last experiment
-tail -1 results/<target>/<env>/results.tsv
-
-# Find frontier (last keep)
-grep "keep" results/<target>/<env>/results.tsv | tail -1
-
-# Read latest profile analysis
-cat results/<target>/<env>/profiles/<latest>-analysis.txt
-
-# Read candidates
+# Find where you left off
 cat results/<target>/<env>/candidates.md
+tail -5 results/<target>/<env>/results.tsv
+ls results/<target>/<env>/profiles/
 
-# Checkout frontier and continue
-cd targets/<target>/src
-git checkout <frontier_branch>
+# Read latest profile
+cat results/<target>/<env>/profiles/<latest>-stacks.txt
 ```
 
 ## Metric Direction
 
-Read `direction` from target.md:
-- `direction: lower` → smaller values are better (e.g., peak_rss_mb, latency_p99_ms)
-- `direction: higher` → larger values are better (e.g., throughput_qps)
-
-The keep/discard decision must account for the direction.
+From target.md: `direction: lower` (e.g., peak_rss_mb) or `direction: higher` (e.g., throughput_qps).
