@@ -144,3 +144,16 @@ BEFORE materialization. This requires an API change:
 This is a meaningful architectural change to the aggregate function interface,
 not a simple fix. It would benefit ALL aggregate functions that produce
 variable-size results (groupArray, groupArrayArray, groupUniqArray, etc.).
+
+## Issue Filed: ClickHouse/ClickHouse#100775
+
+Filed issue with full profiling evidence:
+- Stack traces showing PODArray::resize in ColumnString during result materialization
+- Arena instrumentation proving Arena is NOT the problem
+- Proposed API change: IAggregateFunctionHelper::estimateResultBytes()
+- Specific reproducible workload
+
+This is a design-level contribution requiring ClickHouse team input on the
+aggregate function interface change.
+
+URL: https://github.com/ClickHouse/ClickHouse/issues/100775
