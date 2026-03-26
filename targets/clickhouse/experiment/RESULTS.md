@@ -70,3 +70,35 @@ To reduce ClickHouse memory on aggregation workloads, the target should be:
 3. **NOT Arena** — Arena is already efficient (1.4% waste)
 
 The ClickHouse devs' comment about "quadratic waste in allocContinue" is real but only triggers for specific code paths (ColumnString serialization, not aggregate functions). A workload that exercises ColumnString::serializeValueIntoArena would be needed to trigger it.
+
+## BREAKTHROUGH: trace_log Stack Traces Identify Real Bottleneck
+
+### Top 3 Allocations (each ~536 MB)
+
+```
+Allocator::realloc (Allocator.cpp:178)
+  ↑ PODArrayBase::resize (PODArray.h:155)
+    ↑ GroupArrayGeneralImpl<GroupArrayNodeString>::insertResultInto
+      ↑ Aggregator::insertResultsIntoColumns
+        ↑ Aggregator::convertToBlockImplFinal
+          ↑ ConvertingAggregatedToChunksTransform::mergeSingleLevel
+```
+
+### What's Happening
+
+The bottleneck is NOT during aggregation, but during **result materialization**:
+1. `convertToBlockImplFinal` iterates all 1K groups
+2. For each group, `insertResultInto` appends groupArray values to a result ColumnString
+3. ColumnString's internal `chars` PODArray grows via `Allocator::realloc`
+4. At ~536 MB, PODArray doubles to ~1 GB (2x growth factor)
+5. During realloc, BOTH old (536 MB) and new (1 GB) buffers exist = **1.5 GB peak**
+
+### The Optimization
+
+Pre-reserve ColumnString's capacity before inserting results. The Aggregator knows the total result size (it can compute it from the aggregate states) but currently doesn't communicate this to the output column. Adding a `reserve()` call before the insert loop would avoid the realloc doubling peak.
+
+### Evidence Quality
+- Stack traces from ClickHouse's built-in trace_log (Memory trace type)
+- Built with RelWithDebInfo for addressToLine/addressToSymbol
+- 666 memory trace samples, top 3 all show same path
+- Each allocation = 536 MB (PODArray doubling)
