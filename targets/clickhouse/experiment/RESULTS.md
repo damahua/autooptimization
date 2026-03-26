@@ -102,3 +102,22 @@ Pre-reserve ColumnString's capacity before inserting results. The Aggregator kno
 - Built with RelWithDebInfo for addressToLine/addressToSymbol
 - 666 memory trace samples, top 3 all show same path
 - Each allocation = 536 MB (PODArray doubling)
+
+## exp002: Pre-reserve Output Columns — NO IMPACT
+
+Baseline N=3: mean 2262.3 MB (stddev 2.1)
+exp002 N=3: mean 2264.2 MB (stddev 0.3)
+Delta: +1.9 MB (+0.08%) — zero effect
+
+### Why
+`IColumn::reserve(places.size())` only reserves the offsets array (1000 × 8B = 8KB).
+The 536 MB allocation is in ColumnString's `chars` PODArray (actual string bytes).
+`ColumnString::reserve(n)` only does `offsets.reserve_exact(n)` — it doesn't touch `chars`.
+
+### What Would Work
+Need to pre-reserve `chars` with the total byte count. Options:
+1. Add `ColumnString::reserveChars(size_t total_bytes)` — simple but needs total byte count
+2. Compute total bytes from aggregate states before materializing — requires iterating states twice
+3. Change groupArray to track cumulative byte count during aggregation and expose it
+
+The fix is feasible but requires touching ColumnString + groupArray aggregate function code.
