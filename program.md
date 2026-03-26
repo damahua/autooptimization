@@ -17,6 +17,47 @@ Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl
    mkdir -p "results/<target>/<env>/logs" "results/<target>/<env>/profiles"
    ```
 
+## Phase 0: Workload Discovery — Know What to Stress
+
+**Before profiling, you need queries/requests that represent real usage.** An idle process or trivial workload produces meaningless profiles. The workload determines what code paths are exercised and what shows up in the profiler.
+
+### Sources for workload discovery (in priority order):
+
+1. **Target's own benchmark suite** — most projects ship standard benchmarks:
+   - ClickHouse: `tests/performance/*.xml` (382 XML test files), `clickhouse-benchmark` tool
+   - PostgreSQL: pgbench, TPC-H
+   - Redis: redis-benchmark
+   - Any project: check `tests/`, `benchmarks/`, `perf/` directories
+
+2. **Production-representative queries** — from documentation, tutorials, or user forums:
+   - Official docs "getting started" queries
+   - Blog posts showing real use cases
+   - GitHub issues tagged "performance" (users share their slow queries)
+   - Slow query logs if available
+
+3. **Metric-targeted stress patterns:**
+   - **Memory (peak_rss):** high-cardinality GROUP BY, large JOINs, window functions, groupArray with many values
+   - **CPU (latency):** complex WHERE filters, regex matching, sorting large results, aggregation with many functions
+   - **I/O:** full table scans, FINAL queries, heavy merge operations
+
+4. **Search online** for the target's known performance issues:
+   - GitHub issues/PRs tagged "performance"
+   - Blog posts about optimization
+   - Conference talks about internals
+   - This reveals which workload patterns actually stress the system
+
+### Workload design requirements:
+- [ ] Queries exercise the code paths relevant to the primary metric
+- [ ] Data scale is production-representative (not toy: 100K rows is rarely enough)
+- [ ] Workload is reproducible (deterministic data generation, fixed row counts)
+- [ ] Multiple query types cover different code paths (aggregation, scan, sort, join)
+
+### Output:
+Write `targets/<target>/workload.sh` and `targets/<target>/profile_workload.sh` with queries that:
+- Create test data at sufficient scale
+- Run representative queries
+- Output standardized metrics (latency_p99_ms, throughput_qps, error_rate)
+
 ## Phase 1: Deep Profile — Find the Real Bottleneck
 
 **This is the most important phase.** Do NOT scan code or guess optimizations. Profile FIRST with stack-level allocation tracing to find WHERE resources are actually spent.
