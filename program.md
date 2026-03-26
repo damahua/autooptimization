@@ -51,11 +51,13 @@ Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl
 - [ ] Data scale is production-representative (not toy: 100K rows is rarely enough)
 - [ ] Workload is reproducible (deterministic data generation, fixed row counts)
 - [ ] Multiple query types cover different code paths (aggregation, scan, sort, join)
+- [ ] **Concurrent queries are mandatory** — production services always handle multiple simultaneous requests. Single-query testing misses contention effects and under-represents peak memory by 2-3×. Run at least 4 concurrent queries during profiling.
+- [ ] Both single-query AND concurrent profiling should be collected — some bottlenecks only appear under contention (MemoryTracker races, lock contention, allocator fragmentation)
 
 ### Output:
 Write `targets/<target>/workload.sh` and `targets/<target>/profile_workload.sh` with queries that:
 - Create test data at sufficient scale
-- Run representative queries
+- Run representative queries both sequentially and concurrently
 - Output standardized metrics (latency_p99_ms, throughput_qps, error_rate)
 
 ## Phase 1: Deep Profile — Find the Real Bottleneck
