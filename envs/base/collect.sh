@@ -11,15 +11,16 @@ POD=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
   get pod -l "app=autoopt-$TARGET" -o jsonpath='{.items[0].metadata.name}')
 log_step "BEFORE" "Pod: $POD | Namespace: $NAMESPACE"
 
-# === Container-level metrics (language-agnostic) ===
+# === Container-level metrics ===
 
 log_status "Reading /proc/1/status for RSS..."
-VM_HWM_KB=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
-  exec "$POD" -- cat /proc/1/status 2>/dev/null | grep VmHWM | awk '{print $2}' || echo 0)
+PROC_STATUS=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
+  exec "$POD" -- cat /proc/1/status 2>/dev/null || echo "")
+
+VM_HWM_KB=$(echo "$PROC_STATUS" | grep VmHWM | awk '{print $2}' || echo 0)
 PEAK_RSS_MB=$(echo "scale=1; ${VM_HWM_KB:-0} / 1024" | bc)
 
-VM_RSS_KB=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
-  exec "$POD" -- cat /proc/1/status 2>/dev/null | grep VmRSS | awk '{print $2}' || echo 0)
+VM_RSS_KB=$(echo "$PROC_STATUS" | grep "^VmRSS:" | awk '{print $2}' || echo 0)
 CURRENT_RSS_MB=$(echo "scale=1; ${VM_RSS_KB:-0} / 1024" | bc)
 
 log_status "Reading CPU from kubectl top..."
@@ -33,22 +34,20 @@ log_status "Reading pod restart count..."
 RESTART_COUNT=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
   get pod "$POD" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)
 
-# === Workload metrics ===
+# === Workload metrics (from target workload output) ===
 WORKLOAD_LOG="$RESULTS_DIR/logs/workload-raw.log"
-LATENCY_P99=0
-THROUGHPUT=0
-ERROR_RATE=0
+LATENCY_P99=0; THROUGHPUT=0; ERROR_RATE=0
 if [ -f "$WORKLOAD_LOG" ]; then
   log_status "Reading workload metrics from $WORKLOAD_LOG..."
-  LATENCY_P99=$(grep "latency_p99_ms=" "$WORKLOAD_LOG" | cut -d= -f2 | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}' || echo 0)
-  THROUGHPUT=$(grep "throughput_qps=" "$WORKLOAD_LOG" | cut -d= -f2 | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}' || echo 0)
-  ERROR_RATE=$(grep "error_rate=" "$WORKLOAD_LOG" | cut -d= -f2 | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}' || echo 0)
+  LATENCY_P99=$(grep "latency_p99_ms=" "$WORKLOAD_LOG" | tail -1 | cut -d= -f2 || echo 0)
+  THROUGHPUT=$(grep "throughput_qps=" "$WORKLOAD_LOG" | tail -1 | cut -d= -f2 || echo 0)
+  ERROR_RATE=$(grep "error_rate=" "$WORKLOAD_LOG" | tail -1 | cut -d= -f2 || echo 0)
 fi
 
 MEM_RAW=$(kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" \
   top pod "$POD" --no-headers 2>/dev/null | awk '{print $3}' || echo "unknown")
 
-# === Output ===
+# === Output (key=value format for parsing) ===
 echo "peak_rss_mb=${PEAK_RSS_MB}"
 echo "current_rss_mb=${CURRENT_RSS_MB}"
 echo "cpu_pct=${CPU_PCT}"

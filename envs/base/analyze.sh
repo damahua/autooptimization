@@ -110,7 +110,8 @@ if [ -f "$PERF_FILE" ] && [ -s "$PERF_FILE" ]; then
   echo "rank  samples  pct     function"
 
   # Extract function names from perf script output (lines with function names after addresses)
-  grep -oP '\S+\+0x[0-9a-f]+' "$PERF_FILE" 2>/dev/null | \
+  # Use sed instead of grep -P for macOS compatibility
+  sed -n 's/.*\(\([^ ]*\)+0x[0-9a-f]*\).*/\1/p' "$PERF_FILE" 2>/dev/null | \
     sed 's/+0x[0-9a-f]*$//' | \
     sort | uniq -c | sort -rn | head -"$TOP_N" | \
     awk -v total="$TOTAL_SAMPLES" '{
