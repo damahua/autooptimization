@@ -78,3 +78,24 @@ trigger this race condition.
 
 The fix IS technically correct (tracks delta instead of gross) but the practical
 impact requires concurrent queries competing for a tight memory limit.
+
+## Concurrent Workload Testing
+
+### Low-pressure (4x 100K-group queries): No significant difference
+Baseline: 285.7 MB mean (stddev 1.0)
+exp004: 284.4 MB mean (stddev 0.0)
+Delta: -1.3 MB (-0.4%) — within noise
+
+### High-pressure (4x 5M-key GROUP BY): Test in progress
+Single run baseline: 2921.3 MB peak RSS
+(Full N=3 iterations too slow on 2-CPU pod — each run takes ~15-20 min)
+
+### Key Insight
+Concurrent workloads produce 2.6× higher peak RSS than single-query (2921 vs 1100 MB).
+This is the scenario where MemoryTracker over-counting matters most — multiple threads
+doing realloc simultaneously, each temporarily counting old+new.
+
+### Framework Update Needed
+The workload design should default to concurrent queries, not single queries.
+Production ClickHouse always runs concurrent queries. Single-query testing
+misses contention effects and under-represents peak memory.
