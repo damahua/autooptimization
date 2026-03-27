@@ -210,6 +210,7 @@ Ask: "Does this change HOW the code works, or just WHAT numbers it uses?"
 - **Right output type** — PR for measured fixes, issue for design proposals, report for dead ends
 - **Only edit files** in editable scope from target.md
 - **No config tuning** — constants, thresholds, buffer sizes are NOT optimizations
+- **Same-version A/B only** — baseline and experiment MUST be built from the same commit; never compare stock image vs from-source build of a different version
 - **Log everything** — results.tsv captures all experiments including failures
 
 ## Lessons Learned (from ClickHouse experiments)
@@ -229,6 +230,8 @@ These are hard-won lessons from 18+ experiments across 3 pipeline versions:
 6. **Sometimes the right contribution is an issue, not a PR.** ClickHouse's PODArray realloc peak during result materialization requires an API change (estimateResultBytes). Filing an issue with profiling evidence is more valuable than a PR that doesn't work.
 
 7. **Build with debug symbols for profiling, Release for benchmarking.** addressToSymbol/addressToLine return empty strings without debug info. Switch to Release for the actual A/B benchmark.
+
+8. **A/B benchmarks MUST use the same source version.** Build baseline and experiment from the SAME commit — the only difference must be your optimization patch. Never compare a stock Docker image (version X) against a from-source build (version Y). Different versions have hundreds of unrelated changes that contaminate results. The correct process: build from source WITHOUT your change (control), then build WITH your change (experiment), run identical workloads, compare. Incremental rebuilds with ccache make this fast — only the changed files recompile.
 
 ## Resume Protocol
 
