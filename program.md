@@ -211,6 +211,10 @@ Ask: "Does this change HOW the code works, or just WHAT numbers it uses?"
 - **Only edit files** in editable scope from target.md
 - **No config tuning** — constants, thresholds, buffer sizes are NOT optimizations
 - **Same-version A/B only** — baseline and experiment MUST be built from the same commit; never compare stock image vs from-source build of a different version
+- **Deterministic benchmark data** — never use `rand()` in data generation for A/B tests; use `number`, `sipHash64(number)`, or fixed seeds so control and experiment have identical data
+- **Judge absolute impact first** — estimate real-world savings before implementing; if <50 MB or <10% of total query memory, skip the candidate
+- **Verify all code paths** — before changing allocation strategy, check every path that touches the buffer post-allocation (overflow retries, appends, downstream growth)
+- **Self-review before PR** — ask: is methodology sound, is impact meaningful, are edge cases tested, would I approve this from someone else?
 - **Log everything** — results.tsv captures all experiments including failures
 
 ## Lessons Learned (from ClickHouse experiments)
@@ -232,6 +236,14 @@ These are hard-won lessons from 18+ experiments across 3 pipeline versions:
 7. **Build with debug symbols for profiling, Release for benchmarking.** addressToSymbol/addressToLine return empty strings without debug info. Switch to Release for the actual A/B benchmark.
 
 8. **A/B benchmarks MUST use the same source version.** Build baseline and experiment from the SAME commit — the only difference must be your optimization patch. Never compare a stock Docker image (version X) against a from-source build (version Y). Different versions have hundreds of unrelated changes that contaminate results. The correct process: build from source WITHOUT your change (control), then build WITH your change (experiment), run identical workloads, compare. Incremental rebuilds with ccache make this fast — only the changed files recompile.
+
+9. **Judge impact BEFORE implementing.** After profiling, estimate the absolute memory/CPU savings in the real-world scenario, not just percentages. "20% of FormatStringImpl allocations" sounds good but is only 3 MB per query — not worth a PR. Ask: would a ClickHouse user notice this? Would it change their capacity planning? If the absolute savings are under ~50 MB or ~10% of total query memory, the optimization is too marginal. Move on to the next candidate.
+
+10. **Use deterministic data for A/B tests.** Never use `rand()` in INSERT for benchmark data — control and experiment get different data, contaminating the comparison. Use `number`, `sipHash64(number)`, or fixed seeds. The data must be byte-identical between control and experiment runs.
+
+11. **Verify ALL code paths before changing an allocation strategy.** When switching from `resize()` (with headroom) to `resize_exact()` (no headroom), check every code path that touches the buffer AFTER allocation. Look for: overflow/retry paths, append operations, downstream consumers that may grow the buffer. If ANY path relies on headroom, the change is unsafe or counterproductive. In ClickHouse, `U_BUFFER_OVERFLOW_ERROR` retry in `LowerUpperUTF8Impl` relied on power-of-two headroom — removing it made overflows more frequent.
+
+12. **Critically evaluate your own PR before submitting.** Before creating a PR, ask: (a) Is the benchmark methodology sound? (b) Is the absolute impact meaningful to the project? (c) Have I tested edge cases? (d) Would I approve this PR if someone else submitted it? If any answer is no, fix it or don't submit. A weak PR wastes reviewer time and damages credibility.
 
 ## Resume Protocol
 
