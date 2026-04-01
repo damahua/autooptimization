@@ -1,6 +1,0 @@
-turboquant-run1	autoopt/turboquant	main	197e2d0	peak_rss_mb	207	317	-34.7%	-34.7%	-	-	0	0	KEEP	TurboQuant 4-bit: data_level0 26MB vs 160MB, full workload 0% errors
-turboquant-run2	autoopt/turboquant	main	197e2d0	peak_rss_mb	176	317	-44.5%	-44.5%	-	-	0	0	KEEP	TurboQuant 4-bit: distributions don't overlap (max 207 < min 315)
-turboquant-run3	autoopt/turboquant	main	197e2d0	peak_rss_mb	190	317	-40.1%	-40.1%	-	-	0	0	KEEP	TurboQuant 4-bit: 39.7% mean reduction, 6.1x vector compression
-baseline-tq-run1	autoopt/turboquant	main	197e2d0	peak_rss_mb	317	317	0.0%	0.0%	-	-	0	0	BASELINE	Same binary, CHROMA_QUANTIZATION_BITS=0
-baseline-tq-run2	autoopt/turboquant	main	197e2d0	peak_rss_mb	315	317	-0.6%	-0.6%	-	-	0	0	BASELINE	Same binary, CHROMA_QUANTIZATION_BITS=0
-baseline-tq-run3	autoopt/turboquant	main	197e2d0	peak_rss_mb	318	317	0.3%	0.3%	-	-	0	0	BASELINE	Same binary, CHROMA_QUANTIZATION_BITS=0
