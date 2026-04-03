@@ -19,7 +19,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 4. It runs experiments: implement, build, deploy, A/B benchmark (N>=3), keep/discard
 5. Everything is recorded in `results/<target>/` — including failures
 
-The agent runs commands directly — it does not use a pipeline dispatcher. The `examples/lifecycle/` scripts are reference patterns it can learn from.
+The agent runs commands directly — it does not use a pipeline dispatcher. The `examples/lifecycle/` scripts are reference patterns it learns from. For every experiment, the agent generates **reproducible scripts** in `results/<target>/<env>/<exp_id>/` — a human can re-run any experiment by executing 5 shell scripts in order.
 
 ## What the Agent Actually Does
 
@@ -43,7 +43,16 @@ autooptimization/
 │   ├── chroma/             # Chroma vector DB target
 │   ├── rocksdb/            # RocksDB target
 │   └── pyserver/           # Python server (demo target)
-└── results/                # Experiment logs and metrics per target
+└── results/                # Experiment logs, metrics, and reproducible scripts
+    └── <target>/<env>/<exp_id>/
+        ├── build.sh        # exact build commands
+        ├── deploy.sh       # exact deploy commands
+        ├── workload.sh     # exact benchmark workload
+        ├── collect.sh      # exact metric collection
+        ├── teardown.sh     # cleanup
+        ├── metrics.log     # measured results
+        ├── diff.patch      # the code change
+        └── README.md       # hypothesis, reproduction steps, results
 ```
 
 ## Quick Start

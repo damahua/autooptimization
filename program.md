@@ -169,18 +169,70 @@ Run experiments **only on profile-confirmed candidates with verified workloads.*
 1.  Pick top confirmed candidate from candidates.md
 2.  If none remain: report to human or re-profile with different workload
 3.  Implement the optimization
-4.  Build (Release mode for benchmarking — debug symbols not needed here)
-5.  Run N>=3 iterations with TARGETED workload:
+4.  Generate reproducible scripts for both baseline and experiment
+    (see "Reproducible Experiment Scripts" below)
+5.  Build (Release mode for benchmarking — debug symbols not needed here)
+6.  Run N>=3 iterations with TARGETED workload:
       deploy → workload → collect RSS → teardown
-6.  Run N>=3 baseline iterations (reuse if already collected for this workload)
-7.  Compute statistics: mean, stddev, range for both
-8.  Decision:
+7.  Run N>=3 baseline iterations (reuse if already collected for this workload)
+8.  Compute statistics: mean, stddev, range for both
+9.  Decision:
     - Mean improved > 1 stddev AND distributions don't overlap → KEEP
     - Distributions overlap → DISCARD (not statistically significant)
     - Profile shows no change in targeted function → DISCARD (wrong hypothesis)
-9.  Record in results.tsv with multi-run stats
-10. Repeat
+10. Record in results.tsv with multi-run stats
+11. Save metrics.log and diff.patch in the experiment directory
+12. Repeat
 ```
+
+### Reproducible Experiment Scripts
+
+**Every experiment MUST produce runnable scripts** that a human can execute step-by-step to reproduce the results. This is the primary trust mechanism — if someone can't re-run your experiment, the numbers are just claims.
+
+After each experiment (baseline or optimization), generate scripts in:
+```
+results/<target>/<env>/<exp_id>/
+  build.sh          # exact docker build command(s)
+  deploy.sh         # exact kubectl commands, port-forward setup
+  workload.sh       # exact queries/requests that were run
+  collect.sh        # exact metric collection commands
+  profile.sh        # exact profiling commands (if profiling was done)
+  teardown.sh       # cleanup commands
+  metrics.log       # collected metrics output
+  diff.patch        # the code change (experiment only, not baseline)
+  README.md         # what this experiment tests and what to expect
+```
+
+**Script requirements:**
+- **Self-contained** — each script must run independently with no external state. Include all env vars, paths, and parameters inline. A human should be able to `cd` into the directory and run each script in order.
+- **Idempotent where possible** — re-running a script should produce the same result (use deterministic data, fixed seeds).
+- **Commented** — explain what each command does and what to look for in the output. A human unfamiliar with the target should be able to follow along.
+- **Use patterns from `examples/lifecycle/`** — adapt the reference scripts for the specific target. For example, use `/proc/1/status` VmHWM for peak RSS collection (from `examples/lifecycle/collect.sh`), or target-specific profiling hooks (from `examples/lifecycle/profile.sh`).
+
+**README.md for each experiment should include:**
+```markdown
+# <exp_id>: <one-line description>
+
+## Hypothesis
+What optimization is being tested and why (with profiling evidence).
+
+## How to reproduce
+1. ./build.sh    # builds the container image (~X min)
+2. ./deploy.sh   # deploys to K8s and sets up port-forward
+3. ./workload.sh # runs the benchmark workload
+4. ./collect.sh  # collects metrics
+5. ./teardown.sh # cleans up
+
+## Expected results
+<metric>: <expected value> (baseline was <baseline value>)
+
+## Actual results
+Run 1: <value>, Run 2: <value>, Run 3: <value>
+Mean: <mean> ± <stddev>
+Decision: KEEP/DISCARD — <reason>
+```
+
+**A human should be able to verify any experiment by running 5 scripts in order.** If they can't, the experiment is incomplete.
 
 ### Output Types
 
@@ -226,6 +278,7 @@ Ask: "Does this change HOW the code works, or just WHAT numbers it uses?"
 - **Verify all code paths** — before changing allocation strategy, check every path that touches the buffer post-allocation (overflow retries, appends, downstream growth)
 - **Self-review before PR** — ask: is methodology sound, is impact meaningful, are edge cases tested, would I approve this from someone else?
 - **Log everything** — results.tsv captures all experiments including failures
+- **Generate reproducible scripts** — every experiment must produce runnable scripts in `results/<target>/<env>/<exp_id>/` that a human can execute to verify results (see "Reproducible Experiment Scripts" above)
 
 ## Lessons Learned (from ClickHouse experiments)
 
@@ -265,6 +318,11 @@ ls results/<target>/<env>/profiles/
 
 # Read latest profile
 cat results/<target>/<env>/profiles/<latest>-stacks.txt
+
+# Review previous experiments (each has reproducible scripts)
+ls results/<target>/<env>/
+# Each exp_id/ directory has: build.sh, deploy.sh, workload.sh, collect.sh,
+# teardown.sh, metrics.log, README.md, and optionally diff.patch + profile.sh
 ```
 
 ## Metric Direction
