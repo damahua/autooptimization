@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run the full POC demo: baseline + 3 experiments
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # Speed overrides for demo
 export WARMUP_SECONDS=5
@@ -26,7 +26,7 @@ echo ""
 
 # --- Reset state from previous runs ---
 echo "=== Resetting previous demo state ==="
-./run.sh $ENV teardown.sh $TARGET 2>/dev/null || true
+./examples/lifecycle/run-dispatcher.sh $ENV teardown.sh $TARGET 2>/dev/null || true
 rm -rf results/$TARGET/
 
 # Reset source to initial commit
@@ -63,23 +63,23 @@ run_experiment() {
 
   # Build
   echo "[demo] Building..."
-  ./run.sh $ENV build.sh $TARGET > "${LOG_PREFIX}-build.log" 2>&1
+  ./examples/lifecycle/run-dispatcher.sh $ENV build.sh $TARGET > "${LOG_PREFIX}-build.log" 2>&1
 
   # Deploy
   echo "[demo] Deploying..."
-  ./run.sh $ENV deploy.sh $TARGET > "${LOG_PREFIX}-deploy.log" 2>&1
+  ./examples/lifecycle/run-dispatcher.sh $ENV deploy.sh $TARGET > "${LOG_PREFIX}-deploy.log" 2>&1
 
   # Workload
   echo "[demo] Running workload..."
-  ./run.sh $ENV workload.sh $TARGET > "${LOG_PREFIX}-workload.log" 2>&1
+  ./examples/lifecycle/run-dispatcher.sh $ENV workload.sh $TARGET > "${LOG_PREFIX}-workload.log" 2>&1
 
   # Collect
   echo "[demo] Collecting metrics..."
-  ./run.sh $ENV collect.sh $TARGET > "${LOG_PREFIX}-metrics.log"
+  ./examples/lifecycle/run-dispatcher.sh $ENV collect.sh $TARGET > "${LOG_PREFIX}-metrics.log"
 
   # Validate
   echo "[demo] Validating..."
-  ./run.sh $ENV validate.sh $TARGET > "${LOG_PREFIX}-validate.log" 2>&1
+  ./examples/lifecycle/run-dispatcher.sh $ENV validate.sh $TARGET > "${LOG_PREFIX}-validate.log" 2>&1
 
   # Read metrics
   PEAK_RSS=$(grep "^peak_rss_mb=" "${LOG_PREFIX}-metrics.log" | cut -d= -f2)
@@ -93,7 +93,7 @@ run_experiment() {
   echo "[demo] peak_rss_mb=$PEAK_RSS latency_p99_ms=$LATENCY"
 
   # Teardown
-  ./run.sh $ENV teardown.sh $TARGET > /dev/null 2>&1
+  ./examples/lifecycle/run-dispatcher.sh $ENV teardown.sh $TARGET > /dev/null 2>&1
 
   # Export for caller
   export LAST_PEAK_RSS="$PEAK_RSS"
@@ -304,4 +304,4 @@ echo "Full results: results/$TARGET/$ENV/results.tsv"
 echo "Branches:"
 cd "$SRC_DIR" && git branch --list 'autoopt/*' && cd - > /dev/null
 echo ""
-echo "Done! Run './demo/teardown.sh' to clean up."
+echo "Done! Run './examples/demo/teardown.sh' to clean up."

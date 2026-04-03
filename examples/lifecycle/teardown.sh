@@ -1,9 +1,19 @@
 #!/bin/bash
+# EXAMPLE: Resource Cleanup
+# PURPOSE: Clean up K8s resources and port-forwards between experiments.
+#   Each A/B comparison needs a fresh pod — residual state from previous
+#   runs contaminates metrics (warm caches, memory fragmentation).
+# KEY PATTERNS:
+#   - Kill port-forward by PID (from deploy step)
+#   - Delete K8s resources using the same manifest
+#   - Wait for pod termination before starting next experiment
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 SCRIPT_NAME="teardown"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 log_separator "TEARDOWN: $TARGET"
 log_step "BEFORE" "Namespace: $NAMESPACE | Killing port-forwards, deleting K8s resources"

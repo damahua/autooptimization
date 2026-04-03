@@ -1,9 +1,19 @@
 #!/bin/bash
+# EXAMPLE: Kubernetes Deployment
+# PURPOSE: Deploy a target to K8s, wait for readiness, and set up port-forward
+#   so local tools (profilers, workload generators) can reach the service.
+# KEY PATTERNS:
+#   - envsubst for templating k8s manifests with image name/tag
+#   - Wait for pod readiness before proceeding (avoids measuring startup)
+#   - Port-forward with PID tracking for clean teardown
+#   - Connection info written to /tmp for downstream scripts
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 SCRIPT_NAME="deploy"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 log_separator "DEPLOY: $TARGET"
 log_step "BEFORE" "Cluster: $KUBE_CONTEXT | Namespace: $NAMESPACE | Image: autoopt-$TARGET:$IMAGE_TAG"

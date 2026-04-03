@@ -1,13 +1,13 @@
 #!/bin/bash
 # Clean up demo: teardown K8s resources, optionally delete kind cluster
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 echo "=== Tearing down demo ==="
 
 # Teardown any running pods
 export WARMUP_SECONDS=5 WORKLOAD_RUNS=1 RESOURCE_LIMITS_MEMORY=512Mi RESOURCE_REQUESTS_MEMORY=256Mi
-./run.sh local teardown.sh pyserver 2>/dev/null || true
+./examples/lifecycle/run-dispatcher.sh local teardown.sh pyserver 2>/dev/null || true
 
 # Clean results
 rm -rf results/pyserver/

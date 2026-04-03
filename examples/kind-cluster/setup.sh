@@ -1,7 +1,10 @@
 #!/bin/bash
-# One-time setup: create kind cluster and verify prerequisites
+# EXAMPLE: Local Kind Cluster Setup
+# PURPOSE: Create a local Kubernetes cluster using Kind for deploying targets.
+#   The agent needs a K8s cluster to deploy, profile, and benchmark targets.
+# PREREQUISITES: docker, kubectl, kind, git, envsubst (gettext), bc, curl
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 echo "=== Checking prerequisites ==="
 for cmd in docker kubectl kind git envsubst bc curl python3; do
@@ -29,4 +32,4 @@ kubectl --context kind-autoopt cluster-info | head -2
 
 echo ""
 echo "=== Setup complete ==="
-echo "Run: ./demo/run.sh"
+echo "Run: ./examples/demo/run.sh"

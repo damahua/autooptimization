@@ -1,9 +1,19 @@
 #!/bin/bash
+# EXAMPLE: Metric Collection
+# PURPOSE: Collect resource metrics from a running K8s pod after workload.
+# KEY PATTERNS:
+#   - /proc/1/status VmHWM gives TRUE peak RSS (high water mark). kubectl top
+#     only shows current RSS which misses spikes during query execution.
+#   - kubectl top gives CPU utilization
+#   - Workload metrics (latency, throughput, errors) parsed from workload log
+#   - Output in key=value format for easy downstream parsing
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 SCRIPT_NAME="collect"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 log_separator "COLLECT METRICS: $TARGET"
 

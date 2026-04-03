@@ -1,10 +1,22 @@
 #!/bin/bash
+# EXAMPLE: Profiling (Memory + CPU)
+# PURPOSE: Capture profiling data from a running pod. This is the most
+#   critical step — without profiling evidence, optimization is guesswork.
+# KEY PATTERNS:
+#   - /proc/1/smaps: per-region RSS breakdown (heap vs anon mmap vs file-backed).
+#     Tells you WHERE memory lives, not just HOW MUCH. If 80% is anon_mmap,
+#     the allocator uses mmap for large allocations — different strategy needed.
+#   - perf record -g: CPU flame graph data (needs perf in container + privileges)
+#   - Target-specific hooks (e.g., ClickHouse system.trace_log, jemalloc prof)
+#     provide the richest data — always prefer native profiling tools
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 SCRIPT_NAME="profile"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 PROFILE_LABEL="${PROFILE_LABEL:-unlabeled}"
 PROFILES_DIR="$RESULTS_DIR/profiles"

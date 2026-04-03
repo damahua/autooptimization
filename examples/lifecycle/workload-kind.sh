@@ -1,10 +1,15 @@
 #!/bin/bash
+# EXAMPLE: Kind-Specific Workload Runner
+# PURPOSE: Same as workload.sh but adapted for local Kind cluster (reads
+#   connection info from deploy step, uses local timeouts).
+# NOTE: This is a teaching example showing how to adapt the base pattern
+#   for a specific environment.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 SCRIPT_NAME="workload-local"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 # macOS compatibility
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")

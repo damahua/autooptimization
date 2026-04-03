@@ -6,12 +6,22 @@ Autonomous AI-driven code optimization framework. Inspired by [karpathy/autorese
 
 Required tools: docker, kubectl, kind, git, envsubst (from gettext), bc, curl
 
+## Reference Examples
+
+See `examples/lifecycle/` for annotated shell scripts showing each phase of the
+optimization lifecycle (build, deploy, workload, collect, profile, analyze, validate,
+teardown). These are teaching patterns — adapt them for each target rather than
+running them directly.
+
+See `examples/kind-cluster/setup.sh` for local Kubernetes cluster setup.
+See `examples/demo/` for a complete end-to-end demo with the pyserver target.
+
 ## Setup
 
 1. **Agree on target, environment, metric, and tag**
 2. **Read target config:** `targets/<target>/target.md`, `targets/<target>/hints.md`
 3. **Clone target source** (shallow, selective submodules for large C++ projects)
-4. **Verify environment:** docker, kubectl, kind cluster
+4. **Verify environment:** docker, kubectl, kind cluster (see `examples/kind-cluster/setup.sh`)
 5. **Initialize results:**
    ```bash
    mkdir -p "results/<target>/<env>/logs" "results/<target>/<env>/profiles"

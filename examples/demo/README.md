@@ -18,16 +18,16 @@ brew install kubectl kind gettext coreutils
 
 ```bash
 # 1. Set up kind cluster (one-time)
-./demo/setup.sh
+./examples/kind-cluster/setup.sh
 
 # 2. Run the full demo (baseline + 3 experiments, ~5 min)
-./demo/run.sh
+./examples/demo/run.sh
 
 # 3. View results
 cat results/pyserver/local/summary.md
 
 # 4. Clean up
-./demo/teardown.sh
+./examples/demo/teardown.sh
 ```
 
 ## What Happens
@@ -75,4 +75,5 @@ Replace `targets/pyserver/` with any project:
 - `target.md` — what metric to optimize, what files to edit
 - `hints.md` — domain knowledge for the AI agent
 
-The framework handles everything else: build, deploy, measure, track, report.
+The agent follows `program.md` and adapts patterns from `examples/lifecycle/` for
+each target. See the lifecycle README for details on each pattern.

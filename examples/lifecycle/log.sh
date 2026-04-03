@@ -1,6 +1,6 @@
 #!/bin/bash
 # Shared logging utilities for autooptimization framework.
-# Source this file in any script: source "$FRAMEWORK_ROOT/envs/base/log.sh"
+# Source this file in any script: source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 #
 # Provides structured logging with timestamps so the developer/owner
 # can see exactly what's happening at each step.

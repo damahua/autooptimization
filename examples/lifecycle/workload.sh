@@ -1,10 +1,20 @@
 #!/bin/bash
+# EXAMPLE: Workload Runner
+# PURPOSE: Run target-specific workloads N times for statistical stability.
+#   A single run tells you nothing — RSS varies 10-20% between identical runs.
+# KEY PATTERNS:
+#   - Warmup period before measurement (avoid measuring cold-start)
+#   - Health check with retry loop (service may not be ready immediately)
+#   - Multi-run execution (N>=3 from program.md methodology)
+#   - Timeout per run to catch hangs
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 SCRIPT_NAME="workload"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 # macOS compatibility
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")

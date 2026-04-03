@@ -1,63 +1,83 @@
 # autooptimization
 
-A framework for autonomous AI-driven code optimization. An AI agent continuously optimizes a target project's source code by deploying to Kubernetes, benchmarking, and deciding whether to keep or discard each change — running in a loop until a human stops it.
+A methodology for autonomous AI-driven code optimization. An AI agent follows a structured protocol (`program.md`) to profile unfamiliar codebases, identify bottlenecks from evidence, implement optimizations, and validate results with statistically rigorous A/B benchmarks.
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
+## What This Is
+
+1. **A methodology** (`program.md`) — a detailed protocol for profile-first optimization that an AI agent follows. Includes workload discovery, stack-level profiling, candidate validation, experiment loops, and 12 hard-won lessons from real optimization attempts.
+2. **Target definitions** (`targets/`) — codebases to optimize, each with its own Dockerfile, K8s manifest, workload scripts, and domain hints for the agent.
+3. **Annotated examples** (`examples/`) — shell scripts showing lifecycle patterns (build, deploy, profile, collect, etc.) that the agent adapts per target.
+4. **Experiment results** (`results/`) — metrics, profiles, and logs from optimization experiments on each target.
+
 ## How It Works
 
-1. **Pick a target** (codebase to optimize) and an **environment** (where to deploy)
-2. **Run a baseline** — build, deploy, run workload, collect metrics
-3. **Experiment loop** (runs forever until stopped):
-   - Analyze source code for optimization opportunities
-   - Create a branch, make code changes, commit
-   - Build → Deploy (K8s) → Workload → Collect metrics → Validate
-   - If the primary metric improved: **keep**. Otherwise: **discard**
-   - Record everything in `results.tsv`, repeat
+1. Point an AI agent at `program.md` and a target (e.g., `targets/clickhouse/`)
+2. The agent profiles the target with production-grade tools to find real bottlenecks
+3. It identifies optimization candidates backed by stack-level profiling evidence
+4. It runs experiments: implement, build, deploy, A/B benchmark (N>=3), keep/discard
+5. Everything is recorded in `results/<target>/` — including failures
 
-## Prerequisites
+The agent runs commands directly — it does not use a pipeline dispatcher. The `examples/lifecycle/` scripts are reference patterns it can learn from.
 
-- docker, kubectl, kind, git, envsubst (gettext), bc, curl
+## What the Agent Actually Does
+
+For **ClickHouse**, the agent used `system.trace_log` with `trace_type='Memory'` to get stack-level allocation traces, identifying `ColumnString::shrinkToFit` as the #1 allocator (1576 MB). It implemented hash table prefetch for string GROUP BY, achieving 8% latency reduction.
+
+For **Chroma**, the agent used `/proc/PID/smaps` for memory region analysis and jemalloc profiling (`_RJEM_MALLOC_CONF=prof:true`) to confirm 97% of memory was in hnswlib C++ via FFI. It then implemented TurboQuant 4-bit vector quantization, reducing peak RSS by 40%.
+
+For **DataFusion**, the agent identified 8.5x write amplification in the spill path and implemented a gc_view_arrays optimization.
 
 ## Project Structure
 
 ```
 autooptimization/
-├── program.md              # AI agent instructions
-├── run.sh                  # Entrypoint: ./run.sh <env> <script> <target>
-├── envs/
-│   ├── base/               # Default lifecycle scripts (build, deploy, collect, ...)
-│   └── local/              # Kind cluster overrides
+├── program.md              # AI agent methodology (the core of the project)
+├── examples/
+│   ├── lifecycle/          # Annotated lifecycle script patterns
+│   ├── kind-cluster/       # Local K8s cluster setup
+│   └── demo/               # End-to-end demo with pyserver target
 ├── targets/
 │   ├── clickhouse/         # ClickHouse optimization target
-│   └── pyserver/           # Python server optimization target
-├── results/                # Experiment logs and metrics per target/env
-└── demo/                   # Demo setup and scripts
+│   ├── chroma/             # Chroma vector DB target
+│   ├── rocksdb/            # RocksDB target
+│   └── pyserver/           # Python server (demo target)
+└── results/                # Experiment logs and metrics per target
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# 1. Set up a Kind cluster
-./demo/setup.sh
+# 1. Read the methodology
+cat program.md
 
-# 2. Run the lifecycle for a target
-./run.sh local build.sh <target>
-./run.sh local deploy.sh <target>
-./run.sh local workload.sh <target>
-./run.sh local collect.sh <target>
-./run.sh local validate.sh <target>
-./run.sh local teardown.sh <target>
+# 2. Set up a local K8s cluster (optional, for targets that need it)
+./examples/kind-cluster/setup.sh
+
+# 3. Run the pyserver demo (shows the full optimization loop)
+./examples/demo/run.sh
+
+# 4. Point your AI agent at a real target
+# Agent reads: program.md + targets/<target>/target.md + targets/<target>/hints.md
 ```
 
-See `program.md` for the full AI agent protocol, experiment loop details, and results format.
+## Targets
+
+| Target | Language | Profiling Tools Used | Key Result |
+|--------|----------|---------------------|------------|
+| ClickHouse | C++ | `system.trace_log` (memory + CPU traces) | 8% string GROUP BY latency reduction |
+| Chroma | Rust/C++ | `/proc/smaps`, jemalloc profiling | 40% peak RSS reduction (TurboQuant) |
+| DataFusion | Rust | Custom instrumentation | 8.5x spill write amplification reduction |
+| RocksDB | C++ | Stack-level allocation tracing | IODebugContext thread-local optimization |
+| pyserver | Python | `/proc/status` VmHWM | Demo target with intentional inefficiencies |
 
 ## Optimization Priority
 
-The framework focuses on **real code-level optimizations**, not configuration tuning:
-
+Code-level only — NOT configuration tuning:
 1. Data structure changes
 2. Memory allocation patterns
 3. Algorithmic improvements
 4. Processing logic optimization
-5. CPU optimization (cache locality, vectorization)
+
+See `program.md` for the full methodology, experiment protocol, and lessons learned.

@@ -1,9 +1,18 @@
 #!/bin/bash
+# EXAMPLE: Experiment Validation
+# PURPOSE: Verify the pod survived the workload — no restarts, still running.
+#   A benchmark result is meaningless if the pod OOMed and restarted mid-test.
+# KEY PATTERNS:
+#   - Check restart count (OOM kills cause restarts without clear errors)
+#   - Check pod phase (CrashLoopBackOff means the optimization broke something)
+#   - Target-specific validation hook (e.g., run a smoke query)
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 SCRIPT_NAME="validate"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 log_separator "VALIDATE: $TARGET"
 log_step "BEFORE" "Checking pod health and running target-specific validation"

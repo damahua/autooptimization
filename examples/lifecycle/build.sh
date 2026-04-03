@@ -1,9 +1,19 @@
 #!/bin/bash
+# EXAMPLE: Docker Image Build
+# PURPOSE: Build a container image for a target codebase. Each target defines
+#   its own Dockerfile — stock image for benchmarking, source build with debug
+#   symbols for profiling (RelWithDebInfo).
+# KEY PATTERNS:
+#   - Timeout handling (macOS compatibility with gtimeout)
+#   - Registry push for remote K8s clusters
+#   - Image size tracking for build validation
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 SCRIPT_NAME="build"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 # macOS compatibility
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")

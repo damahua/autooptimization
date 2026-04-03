@@ -1,10 +1,20 @@
 #!/bin/bash
+# EXAMPLE: Profile Analysis & A/B Comparison
+# PURPOSE: Parse raw profiling data (smaps, perf, target-specific) into
+#   actionable summaries. Optionally compare two profiles (baseline vs experiment).
+# KEY PATTERNS:
+#   - smaps aggregation: categorize RSS by type (heap, anon_mmap, file-backed)
+#   - Top memory regions sorted by RSS to find dominant allocations
+#   - CPU function ranking from perf script output
+#   - A/B delta computation for key metrics between two profiles
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 RESULTS_DIR="$FRAMEWORK_ROOT/results/$TARGET/$ENV"
 SCRIPT_NAME="analyze"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 PROFILE_LABEL="${PROFILE_LABEL:-unlabeled}"
 PROFILE_COMPARE_TO="${PROFILE_COMPARE_TO:-}"

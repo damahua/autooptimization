@@ -1,9 +1,19 @@
 #!/bin/bash
+# EXAMPLE: Kind-Specific Build (Source + Stock)
+# PURPOSE: Build for a local Kind cluster — supports both source builds
+#   (with ccache volumes for incremental compilation) and stock image builds.
+# KEY PATTERNS:
+#   - ccache + Docker volumes for fast incremental C++ builds
+#   - Separate builder image (Dockerfile.builder) vs runtime image (Dockerfile)
+#   - kind load docker-image to push to local cluster without a registry
+#   - BUILD_MODE detection: source if Dockerfile.builder + git repo exist
+# NOTE: This is a teaching example. The AI agent adapts these patterns for
+#   each target rather than running this script via the dispatcher.
 set -euo pipefail
 TARGET="$1"
 TARGET_DIR="$FRAMEWORK_ROOT/targets/$TARGET"
 SCRIPT_NAME="build-local"
-source "$FRAMEWORK_ROOT/envs/base/log.sh"
+source "$FRAMEWORK_ROOT/examples/lifecycle/log.sh"
 
 # macOS compatibility
 TIMEOUT_CMD=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || echo "")
