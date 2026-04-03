@@ -95,3 +95,37 @@ GROUP BY cu.id, cu.name, cu.email, cu.region
 HAVING sum(o.total_amount) > 1000
 ORDER BY lifetime_value DESC
 LIMIT 50;
+
+------------------------------------------------------------------------
+-- QUERY 6: Weekly analytics dashboard (BI tool / exec report)
+-- Problem: 5-table join producing 2.5M intermediate rows, GROUP BY on
+-- 4 dimensions with date_trunc, sorts spilling to disk (73MB per worker).
+-- This is the "super complex join with time GROUP BY" pattern.
+-- Fix: materialized view that pre-joins and pre-aggregates at order level
+------------------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT
+    date_trunc('week', o.created_at) AS week,
+    c.name AS category,
+    cu.tier,
+    cu.region,
+    count(DISTINCT o.id) AS order_count,
+    count(DISTINCT o.customer_id) AS unique_customers,
+    sum(oi.quantity) AS units_sold,
+    sum(oi.quantity * oi.unit_price * (1 - oi.discount_pct/100)) AS gross_revenue,
+    sum(oi.quantity * (oi.unit_price * (1 - oi.discount_pct/100) - p.cost)) AS gross_profit,
+    avg(o.total_amount) AS avg_order_value,
+    sum(CASE WHEN o.status = 'cancelled' THEN 1 ELSE 0 END)::float
+        / NULLIF(count(DISTINCT o.id), 0) AS cancel_rate
+FROM order_items oi
+JOIN orders o ON o.id = oi.order_id
+JOIN products p ON p.id = oi.product_id
+JOIN categories c ON c.id = p.category_id
+JOIN customers cu ON cu.id = o.customer_id
+WHERE o.created_at >= '2024-01-01' AND o.created_at < '2025-01-01'
+GROUP BY
+    date_trunc('week', o.created_at),
+    c.name,
+    cu.tier,
+    cu.region
+ORDER BY week, gross_revenue DESC;

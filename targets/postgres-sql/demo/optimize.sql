@@ -62,6 +62,40 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_active_stock
     INCLUDE (name, stock_quantity)
     WHERE is_active = true AND stock_quantity > 0;
 
+------------------------------------------------------------------------
+-- FIX 7: Materialized view for complex analytics queries
+-- Profile evidence: Query 6 joins 5 tables producing 2.5M intermediate rows,
+-- sorts spill to disk (73MB per worker), total execution 3.5s.
+-- A materialized view pre-joins at the order level (2M rows), eliminating
+-- the repeated 5-table join. Index on week enables fast date-range scans.
+-- Tradeoff: ~200MB storage, needs REFRESH after data changes.
+------------------------------------------------------------------------
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_order_analytics AS
+SELECT
+    date_trunc('week', o.created_at) AS week,
+    c.name AS category,
+    cu.tier,
+    cu.region,
+    o.id AS order_id,
+    o.customer_id,
+    o.status,
+    o.total_amount,
+    sum(oi.quantity) AS units_sold,
+    sum(oi.quantity * oi.unit_price * (1 - oi.discount_pct/100)) AS gross_revenue,
+    sum(oi.quantity * (oi.unit_price * (1 - oi.discount_pct/100) - p.cost)) AS gross_profit
+FROM order_items oi
+JOIN orders o ON o.id = oi.order_id
+JOIN products p ON p.id = oi.product_id
+JOIN categories c ON c.id = p.category_id
+JOIN customers cu ON cu.id = o.customer_id
+GROUP BY
+    date_trunc('week', o.created_at),
+    c.name, cu.tier, cu.region,
+    o.id, o.customer_id, o.status, o.total_amount;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_mv_order_analytics_week
+    ON mv_order_analytics (week);
+
 -- Re-analyze after adding indexes so the planner knows about them
 ANALYZE customers;
 ANALYZE products;

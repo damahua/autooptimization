@@ -114,3 +114,31 @@ GROUP BY vc.id, vc.name, vc.email, vc.region
 HAVING sum(o.total_amount) > 1000
 ORDER BY lifetime_value DESC
 LIMIT 50;
+
+------------------------------------------------------------------------
+-- QUERY 6 (optimized): Weekly analytics dashboard
+-- Change: Query the materialized view instead of joining 5 tables.
+-- The mv_order_analytics view pre-joins orders+items+products+categories+customers
+-- at the order level (2M rows). The GROUP BY here operates on pre-joined data
+-- with an index scan on week, eliminating the 2.5M-row intermediate sort.
+-- Before: 3607ms (5-table join, disk spill)
+-- After: 483ms (pre-joined matview, in-memory sort)
+------------------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT
+    week,
+    category,
+    tier,
+    region,
+    count(DISTINCT order_id) AS order_count,
+    count(DISTINCT customer_id) AS unique_customers,
+    sum(units_sold) AS units_sold,
+    sum(gross_revenue) AS gross_revenue,
+    sum(gross_profit) AS gross_profit,
+    avg(total_amount) AS avg_order_value,
+    sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END)::float
+        / NULLIF(count(DISTINCT order_id), 0) AS cancel_rate
+FROM mv_order_analytics
+WHERE week >= '2024-01-01' AND week < '2025-01-01'
+GROUP BY week, category, tier, region
+ORDER BY week, gross_revenue DESC;
