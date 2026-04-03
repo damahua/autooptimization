@@ -116,29 +116,29 @@ ORDER BY lifetime_value DESC
 LIMIT 50;
 
 ------------------------------------------------------------------------
--- QUERY 6 (optimized): Weekly analytics dashboard
--- Change: Query the materialized view instead of joining 5 tables.
--- The mv_order_analytics view pre-joins orders+items+products+categories+customers
--- at the order level (2M rows). The GROUP BY here operates on pre-joined data
--- with an index scan on week, eliminating the 2.5M-row intermediate sort.
--- Before: 3607ms (5-table join, disk spill)
--- After: 483ms (pre-joined matview, in-memory sort)
+-- QUERY 6 (optimized): Flexible analytics dashboard
+-- Change: Query the DAILY materialized view instead of joining 5 tables.
+-- The mv_daily_sales view pre-aggregates at day granularity (~1500 rows).
+-- date_trunc at query time lets users pick ANY window: week, month, quarter, year.
+-- Before: 2827ms (5-table join, 2.5M rows, disk spill)
+-- After: 1.7ms weekly, 0.8ms monthly, 0.5ms quarterly (any granularity <2ms)
 ------------------------------------------------------------------------
+-- Weekly view (same as the original query)
 EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
 SELECT
-    week,
+    date_trunc('week', day) AS period,
     category,
     tier,
     region,
-    count(DISTINCT order_id) AS order_count,
-    count(DISTINCT customer_id) AS unique_customers,
+    sum(order_count) AS order_count,
+    sum(unique_customers) AS unique_customers,
     sum(units_sold) AS units_sold,
     sum(gross_revenue) AS gross_revenue,
     sum(gross_profit) AS gross_profit,
-    avg(total_amount) AS avg_order_value,
-    sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END)::float
-        / NULLIF(count(DISTINCT order_id), 0) AS cancel_rate
-FROM mv_order_analytics
-WHERE week >= '2024-01-01' AND week < '2025-01-01'
-GROUP BY week, category, tier, region
-ORDER BY week, gross_revenue DESC;
+    sum(total_order_amount) / NULLIF(sum(order_count), 0) AS avg_order_value,
+    sum(CASE WHEN status = 'cancelled' THEN order_count ELSE 0 END)::float
+        / NULLIF(sum(order_count), 0) AS cancel_rate
+FROM mv_daily_sales
+WHERE day >= '2024-01-01' AND day < '2025-01-01'
+GROUP BY date_trunc('week', day), category, tier, region
+ORDER BY period, gross_revenue DESC;

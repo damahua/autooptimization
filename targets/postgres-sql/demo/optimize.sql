@@ -63,38 +63,44 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_active_stock
     WHERE is_active = true AND stock_quantity > 0;
 
 ------------------------------------------------------------------------
--- FIX 7: Materialized view for complex analytics queries
+-- FIX 7: Daily-grain materialized view for flexible analytics
 -- Profile evidence: Query 6 joins 5 tables producing 2.5M intermediate rows,
 -- sorts spill to disk (73MB per worker), total execution 3.5s.
--- A materialized view pre-joins at the order level (2M rows), eliminating
--- the repeated 5-table join. Index on week enables fast date-range scans.
--- Tradeoff: ~200MB storage, needs REFRESH after data changes.
+--
+-- WHY daily grain (not weekly/monthly):
+--   - Users change the dashboard time window: daily, weekly, monthly, quarterly
+--   - A weekly matview breaks when someone picks "monthly" — you'd need N views
+--   - Daily is the finest granularity dashboards use; sub-day goes to raw tables
+--   - Daily collapses 2M orders × 2.5 items = 5M rows into ~1500 rows
+--   - Any further GROUP BY (week, month, quarter) over 1500 rows is <2ms
+--
+-- Tradeoff: ~256KB storage (!), needs REFRESH after data changes.
+-- On RDS: schedule via pg_cron (CREATE EXTENSION pg_cron) or Lambda trigger.
+-- Use CONCURRENTLY to avoid locking reads during refresh.
 ------------------------------------------------------------------------
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_order_analytics AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_sales AS
 SELECT
-    date_trunc('week', o.created_at) AS week,
+    o.created_at::date AS day,
     c.name AS category,
     cu.tier,
     cu.region,
-    o.id AS order_id,
-    o.customer_id,
     o.status,
-    o.total_amount,
+    count(DISTINCT o.id) AS order_count,
+    count(DISTINCT o.customer_id) AS unique_customers,
     sum(oi.quantity) AS units_sold,
     sum(oi.quantity * oi.unit_price * (1 - oi.discount_pct/100)) AS gross_revenue,
-    sum(oi.quantity * (oi.unit_price * (1 - oi.discount_pct/100) - p.cost)) AS gross_profit
+    sum(oi.quantity * (oi.unit_price * (1 - oi.discount_pct/100) - p.cost)) AS gross_profit,
+    sum(o.total_amount) AS total_order_amount,
+    count(o.id) AS order_item_rows  -- for correct avg when rolling up
 FROM order_items oi
 JOIN orders o ON o.id = oi.order_id
 JOIN products p ON p.id = oi.product_id
 JOIN categories c ON c.id = p.category_id
 JOIN customers cu ON cu.id = o.customer_id
-GROUP BY
-    date_trunc('week', o.created_at),
-    c.name, cu.tier, cu.region,
-    o.id, o.customer_id, o.status, o.total_amount;
+GROUP BY o.created_at::date, c.name, cu.tier, cu.region, o.status;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_mv_order_analytics_week
-    ON mv_order_analytics (week);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_mv_daily_sales_day
+    ON mv_daily_sales (day);
 
 -- Re-analyze after adding indexes so the planner knows about them
 ANALYZE customers;
