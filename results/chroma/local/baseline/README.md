@@ -16,6 +16,14 @@ Built from Chroma source (commit 010cd21, v1.0.12) with standard float32 vectors
 - Latency p99: ~1100ms
 - Zero errors across all API requests
 
-## Actual results (3 runs)
-Run 1: 317 MB, Run 2: 315 MB, Run 3: 318 MB
-Mean: 316.7 ± 1.5 MB
+## Actual results
+
+Source-built baseline (early runs, results.tsv):
+Run 1: 299 MB, Run 2: 318 MB, Run 3: 317 MB → Mean: 311.3 ± 10.7 MB
+
+TurboQuant A/B baseline (later runs, same binary as TurboQuant experiment):
+Run 1: 317 MB, Run 2: 315 MB, Run 3: 318 MB → Mean: 316.7 ± 1.5 MB
+
+Note: The TurboQuant A/B used its own baseline runs (not the earlier ones)
+to ensure same-binary comparison. The 316.7 MB figure is the reference for
+the 39.7% reduction claim.

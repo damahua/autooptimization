@@ -25,9 +25,7 @@ if [ "$MODE" = "k8s" ]; then
   export RESOURCE_LIMITS_CPU="2"
   export RESOURCE_LIMITS_MEMORY="4Gi"
 
-  # Use k8s.yaml from the chroma setup branch
-  git -C "$REPO_ROOT" show autoopt/chroma/setup:targets/chroma/k8s.yaml | \
-    envsubst | kubectl --context kind-autoopt -n autoopt apply -f -
+  envsubst < "$TARGET_DIR/k8s.yaml" | kubectl --context kind-autoopt -n autoopt apply -f -
 
   kubectl --context kind-autoopt -n autoopt wait --for=condition=ready pod \
     -l app=autoopt-chroma --timeout=120s

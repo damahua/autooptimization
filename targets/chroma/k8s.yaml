@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoopt-chroma
+  labels:
+    app: autoopt-chroma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoopt-chroma
+  template:
+    metadata:
+      labels:
+        app: autoopt-chroma
+    spec:
+      containers:
+      - name: chroma
+        image: ${IMAGE_NAME}
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "${RESOURCE_REQUESTS_CPU}"
+            memory: "${RESOURCE_REQUESTS_MEMORY}"
+          limits:
+            cpu: "${RESOURCE_LIMITS_CPU}"
+            memory: "${RESOURCE_LIMITS_MEMORY}"
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: IS_PERSISTENT
+          value: "1"
+        - name: PERSIST_DIRECTORY
+          value: "/chroma/chroma"
+        - name: ANONYMIZED_TELEMETRY
+          value: "FALSE"
+        - name: CHROMA_HOST_ADDR
+          value: "0.0.0.0"
+        - name: CHROMA_HOST_PORT
+          value: "8000"
+        readinessProbe:
+          httpGet:
+            path: /api/v2/heartbeat
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /api/v2/heartbeat
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10

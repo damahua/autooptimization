@@ -1,0 +1,48 @@
+FROM rust:1.92.0 AS builder
+
+ARG PROTOC_VERSION=31.1
+
+WORKDIR /chroma
+
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then PROTOC_ZIP=protoc-${PROTOC_VERSION}-linux-x86_64.zip; \
+    elif [ "$ARCH" = "aarch64" ]; then PROTOC_ZIP=protoc-${PROTOC_VERSION}-linux-aarch_64.zip; \
+    else echo "Unsupported: $ARCH" && exit 1; fi && \
+    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/$PROTOC_ZIP && \
+    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
+    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
+    rm -f $PROTOC_ZIP
+
+COPY src/idl/ idl/
+COPY src/Cargo.toml Cargo.toml
+COPY src/Cargo.lock Cargo.lock
+COPY src/rust/ rust/
+
+# Minimize linker memory: no LTO, max codegen units, opt-level 1
+ENV CARGO_PROFILE_RELEASE_LTO=false
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=32
+ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=1
+
+# Limit cargo jobs to reduce peak memory
+RUN --mount=type=cache,sharing=locked,target=/chroma/target/ \
+    --mount=type=cache,sharing=locked,target=/usr/local/cargo/registry/ \
+    --mount=type=cache,sharing=locked,target=/usr/local/cargo/git/ \
+    cargo build -j 2 -p chroma-cli --release && \
+    cp target/release/chroma /chroma/chroma-bin
+
+FROM debian:stable-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dumb-init libssl-dev ca-certificates procps curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY src/rust/frontend/sample_configs/docker_single_node.yaml /config.yaml
+COPY --from=builder /chroma/chroma-bin /usr/local/bin/chroma
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
+    CMD curl -sf http://localhost:8000/api/v2/heartbeat || exit 1
+
+ENTRYPOINT [ "dumb-init", "--", "chroma" ]
+CMD [ "run", "/config.yaml" ]
