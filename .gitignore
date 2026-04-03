@@ -1,8 +1,10 @@
 # Target source code (each is its own git repo)
 targets/*/src/
 
-# Experiment results (generated)
-results/
+# Experiment results — track reproducible scripts, ignore large generated data
+# The scripts (*.sh, *.md, *.patch) are tracked; logs and profiles are generated
+results/**/profiles/
+results/**/logs/
 
 # Build artifacts
 targets/*/output/

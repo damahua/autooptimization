@@ -1,0 +1,36 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 04175b70f34..9c6acf8795a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -72,7 +72,7 @@ rayon = "1.10.0"
+ fastbloom = { version = "0.17.0", features = ["serde"] }
+ validator = { version = "0.19", features = ["derive"] }
+ rust-embed = { version = "8.5.0", features = ["include-exclude", "debug-embed"] }
+-hnswlib = { version = "0.8.2", git = "https://github.com/chroma-core/hnswlib.git", branch = "master" }
++hnswlib = { version = "0.8.2", git = "https://github.com/damahua/hnswlib.git", branch = "turboquant" }
+ usearch = "2.23"
+ faer = { version = "0.24.0", default-features = false, features = ["std", "rand"] }
+ reqwest = { version = "0.12.9", features = ["rustls-tls-native-roots", "http2"], default-features = false }
+diff --git a/rust/index/src/hnsw.rs b/rust/index/src/hnsw.rs
+index 96b09137b3f..42c93154d2e 100644
+--- a/rust/index/src/hnsw.rs
++++ b/rust/index/src/hnsw.rs
+@@ -153,6 +153,10 @@ impl HnswIndex {
+         match hnsw_config {
+             None => Err(WrappedHnswInitError::NoConfigProvided.boxed()),
+             Some(config) => {
++                let quantization_bits: i32 = std::env::var("CHROMA_QUANTIZATION_BITS")
++                    .ok()
++                    .and_then(|v| v.parse().ok())
++                    .unwrap_or(0);
+                 let index = hnswlib::HnswIndex::init(hnswlib::HnswIndexInitConfig {
+                     distance_function: map_distance_function(
+                         index_config.distance_function.clone(),
+@@ -164,6 +168,7 @@ impl HnswIndex {
+                     ef_search: config.ef_search,
+                     random_seed: config.random_seed,
+                     persist_path: config.persist_path.as_ref().map(|s| s.as_str().into()),
++                    quantization_bits,
+                 })
+                 .map_err(|e| WrappedHnswInitError::Other(e).boxed())?;
+                 Ok(HnswIndex {

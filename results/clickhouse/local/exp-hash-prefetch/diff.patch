@@ -1,0 +1,118 @@
+diff --git a/src/Common/HashTable/StringHashTable.h b/src/Common/HashTable/StringHashTable.h
+index ae1659f76444..b98a7cad795c 100644
+--- a/src/Common/HashTable/StringHashTable.h
++++ b/src/Common/HashTable/StringHashTable.h
+@@ -142,6 +142,8 @@ struct StringHashTableEmpty
+ public:
+     bool hasZero() const { return has_zero; }
+ 
++    void prefetchByHash(size_t) const {} /// No-op: empty key storage is trivially small
++
+     void setHasZero()
+     {
+         has_zero = true;
+@@ -275,6 +277,14 @@ class StringHashTable : private boost::noncopyable
+     {
+     }
+ 
++    void reserve(size_t num_elements)
++    {
++        m1.reserve(num_elements / 4);
++        m2.reserve(num_elements / 4);
++        m3.reserve(num_elements / 4);
++        ms.reserve(num_elements / 4);
++    }
++
+     StringHashTable(StringHashTable && rhs) noexcept
+         : m0(std::move(rhs.m0))
+         , m1(std::move(rhs.m1))
+@@ -416,6 +426,21 @@ class StringHashTable : private boost::noncopyable
+         this->dispatch(*this, key_holder, EmplaceCallable(it, inserted));
+     }
+ 
++    struct PrefetchCallable
++    {
++        template <typename Map, typename KeyHolder>
++        void ALWAYS_INLINE operator()(Map & map, KeyHolder &&, size_t hash)
++        {
++            map.prefetchByHash(hash);
++        }
++    };
++
++    template <typename KeyHolder>
++    void ALWAYS_INLINE prefetch(KeyHolder && key_holder)
++    {
++        this->dispatch(*this, std::forward<KeyHolder>(key_holder), PrefetchCallable{});
++    }
++
+     struct FindCallable
+     {
+         // find() doesn't need any key memory management, so we don't work with
+diff --git a/src/Common/HashTable/TwoLevelStringHashTable.h b/src/Common/HashTable/TwoLevelStringHashTable.h
+index 190353f5cdd3..f09a5eb88785 100644
+--- a/src/Common/HashTable/TwoLevelStringHashTable.h
++++ b/src/Common/HashTable/TwoLevelStringHashTable.h
+@@ -38,7 +38,12 @@ class TwoLevelStringHashTable : private boost::noncopyable
+     Impl impls[NUM_BUCKETS];
+ 
+     TwoLevelStringHashTable() = default;
+-    TwoLevelStringHashTable(size_t ) {} /// NOLINT
++
++    explicit TwoLevelStringHashTable(size_t size_hint)
++    {
++        for (auto & impl : impls)
++            impl.reserve(size_hint / NUM_BUCKETS);
++    }
+ 
+     template <typename Source>
+     explicit TwoLevelStringHashTable(const Source & src)
+@@ -176,6 +181,12 @@ class TwoLevelStringHashTable : private boost::noncopyable
+         dispatch(*this, key_holder, typename Impl::EmplaceCallable{it, inserted});
+     }
+ 
++    template <typename KeyHolder>
++    void ALWAYS_INLINE prefetch(KeyHolder && key_holder)
++    {
++        dispatch(*this, std::forward<KeyHolder>(key_holder), typename Impl::PrefetchCallable{});
++    }
++
+     LookupResult ALWAYS_INLINE find(const Key x)
+     {
+         return dispatch(*this, x, typename Impl::FindCallable{});
+diff --git a/src/Interpreters/Aggregator.cpp b/src/Interpreters/Aggregator.cpp
+index 366bef57f78f..f10e14e98ddb 100644
+--- a/src/Interpreters/Aggregator.cpp
++++ b/src/Interpreters/Aggregator.cpp
+@@ -1146,7 +1146,9 @@ void NO_INLINE Aggregator::executeImpl(
+     if (!no_more_keys)
+     {
+         /// Prefetching doesn't make sense for small hash tables, because they fit in caches entirely.
+-        const bool prefetch = Method::State::has_cheap_key_calculation && params.enable_prefetch
++        /// Enable prefetch for all key types including strings — the adaptive PrefetchingHelper
++        /// handles variable hash computation cost by measuring actual iteration latency.
++        const bool prefetch = params.enable_prefetch
+             && (method.data.getBufferSizeInBytes() > min_bytes_for_prefetch);
+ 
+ #if USE_EMBEDDED_COMPILER
+@@ -3206,7 +3208,9 @@ void NO_INLINE Aggregator::mergeSingleLevelDataImpl(
+     AggregatedDataVariantsPtr & res = non_empty_data[0];
+     bool no_more_keys = false;
+ 
+-    const bool prefetch = Method::State::has_cheap_key_calculation && params.enable_prefetch
++    /// Enable prefetch for all key types including strings — the adaptive PrefetchingHelper
++    /// handles variable hash computation cost by measuring actual iteration latency.
++    const bool prefetch = params.enable_prefetch
+         && (getDataVariant<Method>(*res).data.getBufferSizeInBytes() > min_bytes_for_prefetch);
+ 
+     /// We merge all aggregation results to the first, need to ensure non_empty_data size is greater than 1.
+@@ -3291,7 +3295,9 @@ void NO_INLINE Aggregator::mergeBucketImpl(
+     /// We merge all aggregation results to the first.
+     AggregatedDataVariantsPtr & res = data[0];
+ 
+-    const bool prefetch = Method::State::has_cheap_key_calculation && params.enable_prefetch
++    /// Enable prefetch for all key types including strings — the adaptive PrefetchingHelper
++    /// handles variable hash computation cost by measuring actual iteration latency.
++    const bool prefetch = params.enable_prefetch
+         && (Method::Data::NUM_BUCKETS * getDataVariant<Method>(*res).data.impls[bucket].getBufferSizeInBytes() > min_bytes_for_prefetch);
+ 
+     for (size_t result_num = 1, size = data.size(); result_num < size; ++result_num)
