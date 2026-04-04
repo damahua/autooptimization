@@ -1,0 +1,99 @@
+============================================
+  PostgreSQL vs ClickHouse Benchmark
+  2026-04-04T02:31:58Z
+============================================
+
+=== Starting databases ===
+PostgreSQL: PostgreSQL 16.13 (Debian 16.13-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+ClickHouse: 26.2.5.45
+
+=== Loading data ===
+
+ClickHouse facts: 5000000 rows
+ClickHouse dicts: dict_categories	20
+dict_customers	100000
+dict_products	10000
+
+=== Storage ===
+
+PostgreSQL:
+  tablename  |    size    
+-------------+------------
+ order_items | 287 MB
+ orders      | 174 MB
+ customers   | 10 MB
+ products    | 912 kB
+ categories  | 8192 bytes
+(5 rows)
+
+
+ClickHouse:
+   ┌─table──────────┬────rows─┬─compressed─┬─raw────────┐
+1. │ order_facts    │ 5000000 │ 124.18 MiB │ 483.26 MiB │
+2. │ order_items    │ 5000000 │ 51.64 MiB  │ 122.38 MiB │
+3. │ orders         │ 2000000 │ 20.31 MiB  │ 74.41 MiB  │
+4. │ dim_customers  │  100000 │ 1.28 MiB   │ 5.80 MiB   │
+5. │ dim_products   │   10000 │ 84.54 KiB  │ 516.50 KiB │
+6. │ dim_categories │      20 │ 400.00 B   │ 479.00 B   │
+   └────────────────┴─────────┴────────────┴────────────┘
+
+============================================
+  BENCHMARK: Weekly revenue by category × tier × region
+  5-table JOIN, date range 2024, GROUP BY 4 dimensions
+  5 runs each
+============================================
+
+--- 1. PostgreSQL raw (5-table JOIN, FK indexes) ---
+  run 1: 5512.682 ms
+  run 2: 5549.688 ms
+  run 3: 5482.302 ms
+  run 4: 5500.481 ms
+  run 5: 5659.961 ms
+
+--- 2. PostgreSQL + daily matview (1500 rows) ---
+  run 1: 1.374 ms
+  run 2: 0.967 ms
+  run 3: 1.105 ms
+  run 4: 0.997 ms
+  run 5: 1.120 ms
+
+--- 3. ClickHouse normalized (5-table JOIN) ---
+  run 1: 632 ms
+  run 2: 608 ms
+  run 3: 643 ms
+  run 4: 609 ms
+  run 5: 558 ms
+
+--- 4. ClickHouse dictGet() (1 JOIN + in-memory lookups) ---
+  run 1: 61 ms
+  run 2: 60 ms
+  run 3: 54 ms
+  run 4: 53 ms
+  run 5: 54 ms
+
+--- 5. ClickHouse denormalized (flat table, zero JOINs) ---
+  run 1: 35 ms
+  run 2: 27 ms
+  run 3: 25 ms
+  run 4: 30 ms
+  run 5: 23 ms
+
+--- Bonus: ClickHouse flat table — flexible time windows ---
+  week: 22 ms
+  month: 21 ms
+  quarter: 22 ms
+  year: 26 ms
+
+--- Bonus: dictGet (current value) vs snapshot (historical) ---
+  snapshot (all 5M rows): 17 ms
+  dictGet  (all 5M rows): 26 ms
+
+============================================
+  SUMMARY
+============================================
+
+Data: 100K customers, 10K products, 2M orders, 5M items
+Query: weekly revenue by category × tier × region (2024)
+
+Results saved to: /Users/lezhang/Work/autooptimization/targets/postgres-vs-clickhouse/demo/../../../results/postgres-vs-clickhouse/benchmark-results.txt
+
